@@ -153,76 +153,156 @@ class MegaDownloader:
         Returns:
             Tuple of (success, stdout, stderr)
         """
+        import threading
+        import queue
+        import time
+
+        process = None
+        stdout_thread = None
+        stderr_thread = None
+
         try:
             self.logger.debug(f"Running MegaCMD command with progress: {' '.join(command)}")
+            self.logger.debug(f"Working directory: {self.temp_dir}")
 
-            # Start the process
+            # Start the process with improved settings
             process = subprocess.Popen(
                 command,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 text=True,
                 cwd=self.temp_dir,
-                bufsize=1,  # Line buffered
-                universal_newlines=True
+                bufsize=0,  # Unbuffered for real-time output
+                universal_newlines=True,
+                # Ensure process doesn't inherit file descriptors
+                close_fds=True
             )
+
+            self.logger.debug(f"Started MegaCMD process with PID: {process.pid}")
 
             stdout_lines = []
             stderr_lines = []
-
-            # Read output in real-time using threading (works on all platforms)
-            import threading
-            import queue
-
             stdout_queue = queue.Queue()
             stderr_queue = queue.Queue()
 
+            # Thread completion flags
+            stdout_done = threading.Event()
+            stderr_done = threading.Event()
+
             def read_stdout():
-                for line in iter(process.stdout.readline, ''):
-                    stdout_queue.put(line)
-                    progress_tracker.parse_output(line)
-                process.stdout.close()
+                """Read stdout with proper error handling and progress tracking."""
+                try:
+                    self.logger.debug("Starting stdout reader thread")
+                    while True:
+                        line = process.stdout.readline()
+                        if not line:  # EOF
+                            break
+                        stdout_queue.put(line)
+                        # Parse progress and log the line for debugging
+                        self.logger.debug(f"STDOUT: {line.strip()}")
+                        progress_tracker.parse_output(line)
+                except Exception as e:
+                    self.logger.error(f"Error in stdout reader: {e}")
+                finally:
+                    try:
+                        process.stdout.close()
+                    except:
+                        pass
+                    stdout_done.set()
+                    self.logger.debug("Stdout reader thread finished")
 
             def read_stderr():
-                for line in iter(process.stderr.readline, ''):
-                    stderr_queue.put(line)
-                    progress_tracker.parse_output(line)
-                process.stderr.close()
+                """Read stderr with proper error handling and progress tracking."""
+                try:
+                    self.logger.debug("Starting stderr reader thread")
+                    while True:
+                        line = process.stderr.readline()
+                        if not line:  # EOF
+                            break
+                        stderr_queue.put(line)
+                        # Parse progress and log the line for debugging
+                        self.logger.debug(f"STDERR: {line.strip()}")
+                        progress_tracker.parse_output(line)
+                except Exception as e:
+                    self.logger.error(f"Error in stderr reader: {e}")
+                finally:
+                    try:
+                        process.stderr.close()
+                    except:
+                        pass
+                    stderr_done.set()
+                    self.logger.debug("Stderr reader thread finished")
 
-            stdout_thread = threading.Thread(target=read_stdout)
-            stderr_thread = threading.Thread(target=read_stderr)
+            # Start reader threads
+            stdout_thread = threading.Thread(target=read_stdout, name="MegaCMD-stdout")
+            stderr_thread = threading.Thread(target=read_stderr, name="MegaCMD-stderr")
+
+            stdout_thread.daemon = True  # Ensure threads don't prevent process exit
+            stderr_thread.daemon = True
 
             stdout_thread.start()
             stderr_thread.start()
 
-            # Wait for process to complete
-            try:
-                process.wait(timeout=timeout)
-            except subprocess.TimeoutExpired:
-                process.kill()
-                raise
+            self.logger.debug("Started reader threads, waiting for process completion")
 
-            # Wait for threads to finish
-            stdout_thread.join(timeout=5)
-            stderr_thread.join(timeout=5)
+            # Wait for process to complete with periodic checks
+            start_time = time.time()
+            while process.poll() is None:
+                elapsed = time.time() - start_time
+                if elapsed > timeout:
+                    self.logger.warning(f"Process timeout after {elapsed:.1f} seconds, terminating")
+                    process.terminate()
+                    time.sleep(2)  # Give it a chance to terminate gracefully
+                    if process.poll() is None:
+                        self.logger.warning("Process didn't terminate, killing")
+                        process.kill()
+                    raise subprocess.TimeoutExpired(command, timeout)
 
-            # Collect output
-            while not stdout_queue.empty():
-                stdout_lines.append(stdout_queue.get())
-            while not stderr_queue.empty():
-                stderr_lines.append(stderr_queue.get())
+                # Check if we're getting any output (sign of life)
+                if elapsed > 30 and elapsed % 30 == 0:  # Log every 30 seconds after first 30 seconds
+                    self.logger.info(f"Download still in progress... ({elapsed:.0f}s elapsed)")
 
-            # Get final return code
+                time.sleep(1)  # Check every second
+
             return_code = process.returncode
+            self.logger.debug(f"Process completed with return code: {return_code}")
+
+            # Wait for reader threads to finish with longer timeout
+            self.logger.debug("Waiting for reader threads to finish")
+            stdout_done.wait(timeout=10)
+            stderr_done.wait(timeout=10)
+
+            if stdout_thread.is_alive():
+                self.logger.warning("Stdout thread still alive after timeout")
+            if stderr_thread.is_alive():
+                self.logger.warning("Stderr thread still alive after timeout")
+
+            # Collect all output
+            while not stdout_queue.empty():
+                try:
+                    stdout_lines.append(stdout_queue.get_nowait())
+                except queue.Empty:
+                    break
+
+            while not stderr_queue.empty():
+                try:
+                    stderr_lines.append(stderr_queue.get_nowait())
+                except queue.Empty:
+                    break
+
             stdout = ''.join(stdout_lines)
             stderr = ''.join(stderr_lines)
+
+            self.logger.debug(f"Collected {len(stdout_lines)} stdout lines, {len(stderr_lines)} stderr lines")
 
             success = return_code == 0
 
             if success:
-                self.logger.debug(f"Command succeeded: {stdout}")
+                self.logger.info(f"MegaCMD command succeeded")
+                self.logger.debug(f"Command output: {stdout}")
             else:
-                self.logger.error(f"Command failed (code {return_code}): {stderr}")
+                self.logger.error(f"MegaCMD command failed (code {return_code})")
+                self.logger.debug(f"Command stderr: {stderr}")
 
             return success, stdout, stderr
 
@@ -233,9 +313,23 @@ class MegaDownloader:
             return False, "", error_msg
         except Exception as e:
             error_msg = f"Error running command: {str(e)}"
-            self.logger.error(error_msg)
+            self.logger.error(error_msg, exc_info=True)
             progress_tracker.fail(error_msg)
             return False, "", error_msg
+        finally:
+            # Cleanup: ensure process and threads are properly terminated
+            if process:
+                try:
+                    if process.poll() is None:
+                        self.logger.debug("Terminating process in cleanup")
+                        process.terminate()
+                        time.sleep(1)
+                        if process.poll() is None:
+                            process.kill()
+                except:
+                    pass
+
+            # Note: We don't forcefully join daemon threads as they'll exit with the process
 
     def _init_tracking_system(self) -> None:
         """
@@ -488,7 +582,7 @@ class MegaDownloader:
             escaped_url = self._escape_mega_url(url)
 
             # Use mega-get to download the file
-            # don't need self.temp_dir here since we use it in self._run_megacmd_command
+            # Specify destination directory to ensure file goes to the right place
             command = ["mega-get", escaped_url]
             success, stdout, stderr = self._run_megacmd_command(command, timeout=1200)
 
@@ -654,7 +748,7 @@ class MegaDownloader:
             escaped_url = self._escape_mega_url(url)
 
             # Use mega-get to download the file with progress tracking
-            # don't need self.temp_dir here since we use it in self._run_megacmd_command_with_progress
+            # Specify destination directory to ensure file goes to the right place
             command = ["mega-get", escaped_url]
             success, stdout, stderr = self._run_megacmd_command_with_progress(
                 command, progress_tracker, timeout=1200
