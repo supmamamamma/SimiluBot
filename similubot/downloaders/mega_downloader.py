@@ -127,6 +127,8 @@ class MegaDownloader:
         temp_dir = self._get_temp_directory()
         start_time = time.time()
 
+        self.logger.debug(f"Looking for new temp files in: {temp_dir}")
+
         while time.time() - start_time < timeout:
             try:
                 # Scan for new megapy_* files
@@ -137,10 +139,18 @@ class MegaDownloader:
                 new_files = current_files - baseline_files
 
                 if new_files:
-                    # Return the first new file found
-                    new_file = next(iter(new_files))
-                    self.logger.debug(f"Detected new temp file: {new_file}")
-                    return new_file
+                    # Check each new file to see if it's actually being written to
+                    for new_file in new_files:
+                        if os.path.exists(new_file):
+                            # Wait a bit to see if the file size changes (indicating active download)
+                            initial_size = os.path.getsize(new_file)
+                            time.sleep(1)
+
+                            if os.path.exists(new_file):
+                                current_size = os.path.getsize(new_file)
+                                if current_size >= initial_size:  # File is growing or at least stable
+                                    self.logger.debug(f"Detected active temp file: {new_file} (size: {current_size})")
+                                    return new_file
 
                 time.sleep(0.5)  # Check every 0.5 seconds
 
@@ -401,17 +411,16 @@ class MegaDownloader:
             self.logger.debug(f"Baseline temp files: {len(baseline_files)}")
 
             # Start download in a separate thread
-            download_result: dict = {'file_path': None, 'error': None, 'started': False}
+            download_result: dict = {'file_path': None, 'error': None, 'started': False, 'temp_file': None}
 
             def download_worker():
                 try:
                     download_result['started'] = True
-                    # Use a temporary directory to avoid filename issues
-                    temp_download_dir = tempfile.mkdtemp()
-                    self.logger.debug(f"Using temporary download directory: {temp_download_dir}")
+                    # Let mega.py use its default temp directory (/tmp) so we can monitor it
+                    self.logger.debug("Starting MEGA download (using system temp directory)")
 
-                    # Download to temp directory
-                    file_path = self.mega_client.download_url(url, dest_path=temp_download_dir)
+                    # Download using mega.py's default behavior
+                    file_path = self.mega_client.download_url(url, dest_path=None)
                     download_result['file_path'] = file_path
                 except Exception as e:
                     download_result['error'] = str(e)
@@ -426,18 +435,21 @@ class MegaDownloader:
 
             if not download_result['started']:
                 self.logger.warning("Download did not start within 10 seconds")
-
-            # Try to detect the new temp file created by mega.py
-            temp_file_path = self._detect_new_temp_file(baseline_files, timeout=30)
-
-            if temp_file_path:
-                self.logger.info(f"Monitoring temp file: {temp_file_path}")
-                # Monitor the detected temp file for progress
-                self._monitor_temp_file_progress(temp_file_path, total_size, progress_callback, download_thread)
-            else:
-                self.logger.warning("Could not detect temp file, using estimated progress")
                 # Fallback to estimated progress
                 self._simulate_progress(total_size, progress_callback, download_thread)
+            else:
+                # Try to detect the new temp file created by mega.py
+                temp_file_path = self._detect_new_temp_file(baseline_files, timeout=15)
+
+                if temp_file_path:
+                    self.logger.info(f"Detected and monitoring temp file: {temp_file_path}")
+                    download_result['temp_file'] = temp_file_path
+                    # Monitor the detected temp file for progress
+                    self._monitor_temp_file_progress(temp_file_path, total_size, progress_callback, download_thread)
+                else:
+                    self.logger.warning("Could not detect temp file, using estimated progress")
+                    # Fallback to estimated progress
+                    self._simulate_progress(total_size, progress_callback, download_thread)
 
             # Wait for download to complete
             download_thread.join()
@@ -446,14 +458,25 @@ class MegaDownloader:
                 self.logger.error(f"Download error: {download_result['error']}")
                 return None
 
-            temp_file_path = download_result['file_path']
-            if not temp_file_path or not os.path.exists(temp_file_path):
-                self.logger.error("Download failed: No file returned")
+            downloaded_file_path = download_result['file_path']
+            if not downloaded_file_path:
+                self.logger.error("Download failed: No file path returned")
                 return None
 
             # Convert Path object to string if necessary
-            if not isinstance(temp_file_path, str):
-                temp_file_path = str(temp_file_path)
+            if not isinstance(downloaded_file_path, str):
+                downloaded_file_path = str(downloaded_file_path)
+
+            # Check if the downloaded file exists
+            if not os.path.exists(downloaded_file_path):
+                self.logger.error(f"Download failed: File not found at {downloaded_file_path}")
+
+                # Try to find the file in the temp directory if we detected a temp file
+                if download_result['temp_file'] and os.path.exists(download_result['temp_file']):
+                    self.logger.info(f"Using detected temp file: {download_result['temp_file']}")
+                    downloaded_file_path = download_result['temp_file']
+                else:
+                    return None
 
             # Final progress update
             try:
@@ -480,12 +503,12 @@ class MegaDownloader:
                 self.logger.warning(f"Final progress callback error: {e}")
 
             # Move to our cache directory with hashed filename
-            final_path = self._move_temp_file_to_cache(temp_file_path, original_filename)
+            final_path = self._move_temp_file_to_cache(downloaded_file_path, original_filename)
             if final_path:
                 return final_path
 
-            # Fallback: return the temp file path
-            return temp_file_path
+            # Fallback: return the downloaded file path
+            return downloaded_file_path
 
         except Exception as e:
             self.logger.error(f"Download with progress failed: {e}")
@@ -503,6 +526,10 @@ class MegaDownloader:
         """
         last_size = 0
         last_time = time.time()
+        last_update_time = time.time()
+        stall_count = 0
+
+        self.logger.debug(f"Starting progress monitoring for: {temp_file_path}")
 
         while download_thread.is_alive():
             try:
@@ -511,12 +538,25 @@ class MegaDownloader:
 
                 if os.path.exists(temp_file_path):
                     current_size = os.path.getsize(temp_file_path)
+                else:
+                    # File might have been moved/renamed by mega.py
+                    self.logger.debug(f"Temp file no longer exists: {temp_file_path}")
+                    time.sleep(0.5)
+                    continue
 
                 # Calculate speed
                 time_diff = current_time - last_time
                 if time_diff >= 1.0:  # Update every second
                     size_diff = current_size - last_size
                     speed = size_diff / time_diff if time_diff > 0 else 0
+
+                    # Check for stalled download
+                    if size_diff == 0:
+                        stall_count += 1
+                        if stall_count > 10:  # 10 seconds without progress
+                            self.logger.warning(f"Download appears stalled (no progress for {stall_count} seconds)")
+                    else:
+                        stall_count = 0
 
                     # Call progress callback
                     try:
@@ -544,12 +584,20 @@ class MegaDownloader:
 
                     last_size = current_size
                     last_time = current_time
+                    last_update_time = current_time
+
+                    # Log progress periodically
+                    if current_size > 0:
+                        progress_pct = (current_size / total_size) * 100 if total_size > 0 else 0
+                        self.logger.debug(f"Download progress: {current_size}/{total_size} bytes ({progress_pct:.1f}%) - Speed: {speed:.1f} B/s")
 
                 time.sleep(0.5)  # Check every 0.5 seconds
 
             except Exception as e:
                 self.logger.warning(f"Error monitoring temp file progress: {e}")
                 time.sleep(1)
+
+        self.logger.debug("Download thread finished, stopping progress monitoring")
 
     def _simulate_progress(self, total_size: int, progress_callback: Callable, download_thread: threading.Thread) -> None:
         """
