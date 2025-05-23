@@ -82,12 +82,11 @@ class TestMegaDownloader:
     @patch('similubot.downloaders.mega_downloader.subprocess.run')
     @patch('similubot.downloaders.mega_downloader.os.listdir')
     @patch('similubot.downloaders.mega_downloader.os.path.isfile')
-    @patch('similubot.downloaders.mega_downloader.os.path.getmtime')
     @patch('similubot.downloaders.mega_downloader.os.path.exists')
-    @patch('similubot.downloaders.mega_downloader.time.time')
     @patch('similubot.downloaders.mega_downloader.os.path.getsize')
-    def test_download_success(self, mock_getsize, mock_time, mock_exists,
-                             mock_getmtime, mock_isfile, mock_listdir, mock_subprocess):
+    @patch('similubot.downloaders.mega_downloader.uuid.uuid4')
+    def test_download_success(self, mock_uuid, mock_getsize, mock_exists,
+                             mock_isfile, mock_listdir, mock_subprocess):
         """Test successful download."""
         # Mock successful mega-version command for initialization
         version_result = MagicMock()
@@ -103,11 +102,10 @@ class TestMegaDownloader:
         mock_subprocess.side_effect = [version_result, download_result]
 
         # Mock file system operations
-        mock_listdir.return_value = ["test_file.mp4"]
+        # First call returns empty list (before download), second returns the downloaded file
+        mock_listdir.side_effect = [[], ["test_file.mp4"]]
         mock_isfile.return_value = True
         mock_exists.return_value = True
-        mock_time.return_value = 1000.0
-        mock_getmtime.return_value = 950.0  # File created 50 seconds ago
         mock_getsize.return_value = 1024
 
         downloader = MegaDownloader()
@@ -207,3 +205,25 @@ class TestMegaDownloader:
         assert success is False
         assert file_info is None
         assert error is not None and "Failed to get file info" in error
+
+    @patch('similubot.downloaders.mega_downloader.subprocess.run')
+    @patch('similubot.downloaders.mega_downloader.os.path.exists')
+    @patch('similubot.downloaders.mega_downloader.os.makedirs')
+    def test_get_download_history(self, mock_makedirs, mock_exists, mock_subprocess):
+        """Test getting download history."""
+        # Mock successful mega-version command for initialization
+        version_result = MagicMock()
+        version_result.returncode = 0
+        version_result.stdout = "MEGAcmd version 1.6.3"
+        mock_subprocess.return_value = version_result
+
+        # Mock that temp directory doesn't exist initially
+        mock_exists.return_value = False
+
+        downloader = MegaDownloader()
+
+        # Test with empty history
+        history = downloader.get_download_history()
+        assert "recent_downloads" in history
+        assert "statistics" in history
+        assert history["statistics"]["total_downloads"] == 0
