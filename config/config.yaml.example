@@ -1,0 +1,36 @@
+# SimiluBot Configuration
+
+# Discord Bot Configuration
+discord:
+  token: "YOUR_DISCORD_BOT_TOKEN_HERE"
+  command_prefix: "!"
+  
+# Download Configuration
+download:
+  temp_dir: "./temp"
+  
+# Conversion Configuration
+conversion:
+  default_bitrate: 128  # Default AAC bitrate in kbps
+  supported_formats:
+    - mp4
+    - mp3
+    - avi
+    - mkv
+    - wav
+    - flac
+    - ogg
+    - webm
+    
+# Upload Configuration
+upload:
+  default_service: "catbox"  # Options: "catbox", "discord"
+  catbox:
+    user_hash: ""  # Optional: Your CatBox user hash for file management
+  
+# Logging Configuration
+logging:
+  level: "INFO"  # Options: DEBUG, INFO, WARNING, ERROR, CRITICAL
+  file: "./logs/similubot.log"
+  max_size: 10485760  # 10 MB
+  backup_count: 5
