@@ -13,6 +13,7 @@ from similubot.converters.audio_converter import AudioConverter
 from similubot.uploaders.catbox_uploader import CatboxUploader
 from similubot.uploaders.discord_uploader import DiscordUploader
 from similubot.utils.config_manager import ConfigManager
+from similubot.progress.discord_updater import DiscordProgressUpdater
 
 class SimiluBot:
     """
@@ -166,7 +167,7 @@ class SimiluBot:
         bitrate: Optional[int] = None
     ):
         """
-        Process a MEGA link.
+        Process a MEGA link with real-time progress tracking.
 
         Args:
             message: Discord message containing the link
@@ -177,49 +178,82 @@ class SimiluBot:
         if bitrate is None:
             bitrate = self.config.get_default_bitrate()
 
-        # Send initial response
-        response = await message.reply(f"Processing MEGA link... (bitrate: {bitrate} kbps)")
+        # Create initial progress embed
+        embed = discord.Embed(
+            title="🔄 Media Processing",
+            description=f"Preparing to download and convert... (bitrate: {bitrate} kbps)",
+            color=0x3498db
+        )
+        response = await message.reply(embed=embed)
+
+        # Create Discord progress updater
+        discord_updater = DiscordProgressUpdater(response, update_interval=5.0)
+        progress_callback = discord_updater.create_callback()
+
+        # Initialize variables for cleanup
+        file_path: Optional[str] = None
+        converted_file: Optional[str] = None
 
         try:
-            # Update status
-            await response.edit(content="Downloading file from MEGA...")
+            # Step 1: Download with progress
+            self.logger.info(f"Starting MEGA download: {url}")
+            success, file_path, error = await asyncio.to_thread(
+                self.downloader.download_with_progress,
+                url,
+                progress_callback
+            )
 
-            # Download file
-            success, file_path, error = self.downloader.download(url)
-
-            if not success:
-                await response.edit(content=f"Error downloading file: {error}")
+            if not success or not file_path:
+                await self._send_error_embed(response, "Download Failed", error or "Unknown error")
                 return
 
-            # Update status
-            await response.edit(content=f"Converting file to AAC ({bitrate} kbps)...")
+            # Step 2: Convert with progress
+            self.logger.info(f"Starting audio conversion: {file_path}")
+            success, converted_file, error = await asyncio.to_thread(
+                self.converter.convert_to_aac_with_progress,
+                file_path,
+                bitrate,
+                None,  # Use default output file path
+                progress_callback
+            )
 
-            # Convert file
-            success, converted_file, error = self.converter.convert_to_aac(file_path, bitrate)
-
-            if not success:
-                await response.edit(content=f"Error converting file: {error}")
+            if not success or not converted_file:
+                await self._send_error_embed(response, "Conversion Failed", error or "Unknown error")
                 return
 
-            # Update status
+            # Step 3: Upload with progress
             upload_service = self.config.get_default_upload_service()
-            await response.edit(content=f"Uploading file to {upload_service.capitalize()}...")
+            self.logger.info(f"Starting upload to {upload_service}: {converted_file}")
 
-            # Upload file
             if upload_service == "catbox":
-                success, url, error = self.catbox_uploader.upload(converted_file)
+                success, file_url, error = await asyncio.to_thread(
+                    self.catbox_uploader.upload_with_progress,
+                    converted_file,
+                    progress_callback
+                )
 
-                if not success:
-                    await response.edit(content=f"Error uploading file: {error}")
+                if not success or not file_url:
+                    await self._send_error_embed(response, "Upload Failed", error or "Unknown error")
                     return
 
-                # Send success message
+                # Create success embed
                 file_name = os.path.basename(converted_file)
-                await response.edit(
-                    content=f"✅ Converted and uploaded: {file_name} ({bitrate} kbps)\n"
-                            f"Download: {url}"
+                file_size = os.path.getsize(converted_file)
+
+                success_embed = discord.Embed(
+                    title="✅ Processing Complete",
+                    description="Your file has been successfully downloaded, converted, and uploaded!",
+                    color=0x2ecc71
                 )
-            else:  # discord
+                success_embed.add_field(name="📁 File", value=file_name, inline=True)
+                success_embed.add_field(name="🎵 Bitrate", value=f"{bitrate} kbps", inline=True)
+                success_embed.add_field(name="📊 Size", value=self._format_file_size(file_size), inline=True)
+                success_embed.add_field(name="🔗 Download Link", value=file_url, inline=False)
+                success_embed.timestamp = discord.utils.utcnow()
+
+                await response.edit(embed=success_embed)
+
+            else:  # discord upload
                 success, discord_msg, error = await self.discord_uploader.upload(
                     converted_file,
                     message.channel,
@@ -227,19 +261,59 @@ class SimiluBot:
                 )
 
                 if not success:
-                    await response.edit(content=f"Error uploading file: {error}")
+                    await self._send_error_embed(response, "Upload Failed", error or "Unknown error")
                     return
 
-                # Delete the processing message
+                # Delete the processing message since file is uploaded directly
                 await response.delete()
 
         except Exception as e:
             self.logger.error(f"Error processing MEGA link: {e}", exc_info=True)
-            await response.edit(content=f"An error occurred while processing the MEGA link: {str(e)}")
+            await self._send_error_embed(
+                response,
+                "Processing Error",
+                f"An unexpected error occurred: {str(e)}"
+            )
 
         finally:
             # Clean up temporary files
             self._cleanup_temp_files([file_path, converted_file])
+
+    async def _send_error_embed(self, message: discord.Message, title: str, description: str):
+        """
+        Send an error embed to Discord.
+
+        Args:
+            message: Discord message to edit
+            title: Error title
+            description: Error description
+        """
+        error_embed = discord.Embed(
+            title=f"❌ {title}",
+            description=description,
+            color=0xe74c3c
+        )
+        error_embed.timestamp = discord.utils.utcnow()
+        await message.edit(embed=error_embed)
+
+    def _format_file_size(self, size_bytes: int) -> str:
+        """
+        Format file size in bytes to human-readable format.
+
+        Args:
+            size_bytes: Size in bytes
+
+        Returns:
+            Formatted size string
+        """
+        if size_bytes >= 1024 * 1024 * 1024:
+            return f"{size_bytes / (1024 * 1024 * 1024):.1f} GB"
+        elif size_bytes >= 1024 * 1024:
+            return f"{size_bytes / (1024 * 1024):.1f} MB"
+        elif size_bytes >= 1024:
+            return f"{size_bytes / 1024:.1f} KB"
+        else:
+            return f"{size_bytes} B"
 
     def _cleanup_temp_files(self, file_paths: List[Optional[str]]):
         """

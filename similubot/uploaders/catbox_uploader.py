@@ -178,12 +178,15 @@ class CatboxUploader:
                     'reqtype': 'fileupload'
                 }
 
+                # Add user hash if available
+                if self.user_hash:
+                    data['userhash'] = self.user_hash
+
                 # Make the upload request
                 response = requests.post(
-                    self.upload_url,
+                    self.CATBOX_API_URL,
                     files=files,
-                    data=data,
-                    timeout=self.timeout
+                    data=data
                 )
 
                 # Ensure we've reported 100% progress
@@ -210,7 +213,7 @@ class CatboxUploader:
                     return False, None, error_msg
 
         except requests.exceptions.Timeout:
-            error_msg = f"Upload timed out after {self.timeout} seconds"
+            error_msg = "Upload timed out"
             self.logger.error(error_msg)
             progress_tracker.fail_upload(error_msg)
             return False, None, error_msg
