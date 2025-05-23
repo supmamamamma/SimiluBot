@@ -2,6 +2,7 @@
 import logging
 import os
 import sys
+from unittest.mock import patch, MagicMock
 
 # Add the parent directory to the Python path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
@@ -15,8 +16,15 @@ logging.basicConfig(
     handlers=[logging.StreamHandler(sys.stdout)]
 )
 
-def test_mega_link_validation():
+@patch('similubot.downloaders.mega_downloader.subprocess.run')
+def test_mega_link_validation(mock_subprocess):
     """Test MEGA link validation with various link formats."""
+    # Mock successful mega-version command
+    mock_result = MagicMock()
+    mock_result.returncode = 0
+    mock_result.stdout = "MEGAcmd version 1.6.3"
+    mock_subprocess.return_value = mock_result
+
     downloader = MegaDownloader()
 
     # Test links
@@ -42,4 +50,14 @@ def test_mega_link_validation():
         print("-" * 50)
 
 if __name__ == "__main__":
-    test_mega_link_validation()
+    from unittest.mock import patch, MagicMock
+
+    # Mock subprocess for standalone execution
+    with patch('similubot.downloaders.mega_downloader.subprocess.run') as mock_subprocess:
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        mock_result.stdout = "MEGAcmd version 1.6.3"
+        mock_subprocess.return_value = mock_result
+
+        # Call the function with the mock parameter
+        test_mega_link_validation(mock_subprocess)

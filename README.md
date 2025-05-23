@@ -4,14 +4,12 @@ A Discord bot that downloads media from MEGA links, converts them to AAC format,
 
 ## Features
 
-- **Automatic MEGA Link Detection**: Automatically detects and processes MEGA links in Discord messages
-- **Media Download**: Downloads media files from MEGA links with real-time progress tracking
-- **Audio Conversion**: Converts media files to AAC format with configurable bitrate and progress monitoring
-- **File Upload**: Uploads converted files to CatBox (default) or Discord with upload progress
-- **Format Support**: Supports various input formats (MP4, MP3, AVI, MKV, WAV, FLAC, OGG, WebM)
-- **Progress Tracking**: Visual progress bars with real-time updates for all operations
-- **Smart Caching**: Filename hashing and cache management to avoid duplicate downloads
-- **Modular Architecture**: Clean, extensible codebase with comprehensive error handling
+- Automatically detects MEGA links in Discord messages
+- Downloads media files from MEGA links
+- Converts media files to AAC format with configurable bitrate
+- Uploads converted files to CatBox (default) or Discord
+- Supports various input formats (MP4, MP3, AVI, MKV, etc.)
+- Modular and extensible architecture
 
 ## Requirements
 
@@ -73,51 +71,6 @@ The `config/config.yaml` file contains all the configuration options for the bot
 
 The bot will also automatically detect and process MEGA links in messages.
 
-## Progress Tracking Features
-
-SimiluBot provides comprehensive real-time progress tracking for all major operations:
-
-### Visual Progress Bars
-- **Unicode Progress Bars**: Beautiful visual progress indicators using Unicode characters
-- **Real-time Updates**: Progress updates every 5-10 seconds to avoid Discord rate limits
-- **Color-coded Status**: Blue for in-progress, green for complete, red for errors
-
-### Download Progress
-- **File Information**: Shows original filename (truncated if too long)
-- **Download Speed**: Real-time download speed in MB/s or KB/s
-- **Progress Percentage**: Accurate progress based on file size
-- **Time Estimation**: Estimated time remaining for download completion
-- **Cache Detection**: Instantly detects if file already exists in cache
-
-### Conversion Progress
-- **FFmpeg Integration**: Real-time progress tracking during audio conversion
-- **Duration-based Progress**: Progress calculated based on media file duration
-- **Processing Speed**: Shows conversion speed and efficiency
-- **Stage Information**: Clear indication of current conversion stage
-
-### Upload Progress
-- **Service-specific Tracking**: Different progress tracking for CatBox and Discord uploads
-- **Upload Speed**: Real-time upload speed monitoring
-- **File Size Information**: Shows current and total upload progress
-- **Completion Confirmation**: Clear success/failure indication with result links
-
-### Error Handling
-- **Graceful Degradation**: Falls back to simple text messages if progress tracking fails
-- **Rate Limit Protection**: Intelligent update intervals to avoid Discord API limits
-- **Detailed Error Messages**: User-friendly error descriptions with troubleshooting hints
-
-### Example Progress Display
-```
-🔄 MEGA Download
-📁 File: `example_video.mp4`
-📊 Progress: [████████████░░░░░░░░] 65.2%
-📦 Size: 45.2 MB / 69.4 MB
-⚡ Speed: 2.3 MB/s
-⏱️ ETA: 10s
-ℹ️ Status: Downloading from MEGA...
-Elapsed: 19s
-```
-
 ## Project Structure
 
 ```
@@ -135,8 +88,7 @@ SimiluBot/
 │   │   └── discord_uploader.py # Discord upload functionality
 │   └── utils/
 │       ├── config_manager.py  # Configuration management
-│       ├── logger.py          # Logging functionality
-│       └── progress_tracker.py # Progress tracking and visual indicators
+│       └── logger.py          # Logging functionality
 ├── tests/                     # Unit tests
 ├── .gitignore
 ├── README.md

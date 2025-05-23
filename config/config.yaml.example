@@ -4,13 +4,11 @@
 discord:
   token: "YOUR_DISCORD_BOT_TOKEN_HERE"
   command_prefix: "!"
-
+  
 # Download Configuration
 download:
   temp_dir: "./temp"
-  max_cache_files: 20  # Maximum number of cached files to keep
-  hash_algorithm: "md5"  # Hash algorithm for filenames (md5, sha1, sha256)
-
+  
 # Conversion Configuration
 conversion:
   default_bitrate: 128  # Default AAC bitrate in kbps
@@ -23,13 +21,13 @@ conversion:
     - flac
     - ogg
     - webm
-
+    
 # Upload Configuration
 upload:
   default_service: "catbox"  # Options: "catbox", "discord"
   catbox:
     user_hash: ""  # Optional: Your CatBox user hash for file management
-
+  
 # Logging Configuration
 logging:
   level: "INFO"  # Options: DEBUG, INFO, WARNING, ERROR, CRITICAL

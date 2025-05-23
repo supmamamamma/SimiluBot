@@ -175,6 +175,3 @@ cython_debug/
 
 # Config File
 config/config.yaml
-
-# Temp Files
-temp
