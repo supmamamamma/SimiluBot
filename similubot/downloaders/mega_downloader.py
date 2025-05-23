@@ -1,12 +1,15 @@
 """MEGA downloader module for SimiluBot."""
 import asyncio
+import glob
 import hashlib
 import logging
 import os
 import re
+import shutil
+import tempfile
 import time
 import threading
-from typing import List, Optional, Tuple, Callable, Any
+from typing import List, Optional, Tuple, Callable, Any, Set
 from mega import Mega
 
 from similubot.utils.config_manager import ConfigManager
@@ -83,9 +86,119 @@ class MegaDownloader:
         """
         return re.findall(self.MEGA_LINK_PATTERN, text)
 
+    def _get_temp_directory(self) -> str:
+        """
+        Get the system temporary directory where mega.py creates temporary files.
+
+        Returns:
+            Path to the temporary directory
+        """
+        return tempfile.gettempdir()
+
+    def _scan_temp_files(self) -> Set[str]:
+        """
+        Scan the temporary directory for existing megapy_* files.
+
+        Returns:
+            Set of existing temporary file paths
+        """
+        temp_dir = self._get_temp_directory()
+        try:
+            # Use glob to find all megapy_* files in the temp directory
+            pattern = os.path.join(temp_dir, "megapy_*")
+            existing_files = set(glob.glob(pattern))
+            self.logger.debug(f"Found {len(existing_files)} existing megapy temp files")
+            return existing_files
+        except Exception as e:
+            self.logger.warning(f"Error scanning temp directory: {e}")
+            return set()
+
+    def _detect_new_temp_file(self, baseline_files: Set[str], timeout: int = 30) -> Optional[str]:
+        """
+        Detect a new temporary file created by mega.py after download starts.
+
+        Args:
+            baseline_files: Set of existing temp files before download
+            timeout: Maximum time to wait for new file detection (seconds)
+
+        Returns:
+            Path to the new temporary file, or None if not detected
+        """
+        temp_dir = self._get_temp_directory()
+        start_time = time.time()
+
+        while time.time() - start_time < timeout:
+            try:
+                # Scan for new megapy_* files
+                pattern = os.path.join(temp_dir, "megapy_*")
+                current_files = set(glob.glob(pattern))
+
+                # Find new files that weren't in the baseline
+                new_files = current_files - baseline_files
+
+                if new_files:
+                    # Return the first new file found
+                    new_file = next(iter(new_files))
+                    self.logger.debug(f"Detected new temp file: {new_file}")
+                    return new_file
+
+                time.sleep(0.5)  # Check every 0.5 seconds
+
+            except Exception as e:
+                self.logger.warning(f"Error detecting new temp file: {e}")
+                time.sleep(1)
+
+        self.logger.warning(f"No new temp file detected within {timeout} seconds")
+        return None
+
+    def _move_temp_file_to_cache(self, temp_file_path: str, original_filename: str) -> Optional[str]:
+        """
+        Move a temporary file to our cache directory with hashed filename.
+
+        Args:
+            temp_file_path: Path to the temporary file
+            original_filename: Original filename from MEGA
+
+        Returns:
+            Path to the final cached file, or None if move failed
+        """
+        try:
+            # Generate hash from original filename
+            filename_hash = self._hash_filename(original_filename)
+
+            # Get file extension from original filename
+            _, ext = os.path.splitext(original_filename)
+
+            # Create final filename with hash and original extension
+            final_filename = f"{filename_hash}{ext}"
+            final_path = os.path.join(self.temp_dir, final_filename)
+
+            self.logger.debug(f"Moving temp file: {temp_file_path} -> {final_path}")
+
+            # Check if target file already exists
+            if os.path.exists(final_path):
+                self.logger.info(f"Target file already exists: {final_path}")
+                # Remove the temporary file since we already have the target
+                try:
+                    os.remove(temp_file_path)
+                    self.logger.debug(f"Removed temporary file: {temp_file_path}")
+                except Exception as e:
+                    self.logger.warning(f"Failed to remove temp file {temp_file_path}: {e}")
+                return final_path
+
+            # Move the file using shutil.move (handles cross-filesystem moves)
+            shutil.move(temp_file_path, final_path)
+
+            self.logger.info(f"Successfully moved file to: {final_path}")
+            return final_path
+
+        except Exception as e:
+            self.logger.error(f"Failed to move temp file {temp_file_path}: {e}")
+            return None
+
     def download(self, url: str, progress_callback: Optional[Callable] = None) -> Tuple[bool, Optional[str], Optional[str]]:
         """
-        Download a file from a MEGA link.
+        Download a file from a MEGA link with improved progress tracking and filename handling.
 
         Args:
             url: MEGA link to download
@@ -138,11 +251,22 @@ class MegaDownloader:
                     if progress_callback:
                         try:
                             if asyncio.iscoroutinefunction(progress_callback):
-                                # Run async callback in a thread-safe way
-                                loop = asyncio.new_event_loop()
-                                asyncio.set_event_loop(loop)
-                                loop.run_until_complete(progress_callback(file_size, file_size, 0))
-                                loop.close()
+                                # For async callbacks, we need to schedule them properly
+                                try:
+                                    # Try to get the current event loop
+                                    loop = asyncio.get_running_loop()
+                                    # Schedule the coroutine to run in the loop
+                                    asyncio.run_coroutine_threadsafe(
+                                        progress_callback(file_size, file_size, 0), loop
+                                    )
+                                except RuntimeError:
+                                    # No running loop, create a new one
+                                    loop = asyncio.new_event_loop()
+                                    asyncio.set_event_loop(loop)
+                                    try:
+                                        loop.run_until_complete(progress_callback(file_size, file_size, 0))
+                                    finally:
+                                        loop.close()
                             else:
                                 progress_callback(file_size, file_size, 0)
                         except Exception as e:
@@ -150,28 +274,22 @@ class MegaDownloader:
 
                     return True, existing_file_path, None
 
-            # Download the file with progress tracking
+            # Download the file with improved progress tracking and filename handling
             if progress_callback and file_size > 0 and original_filename:
-                file_path = self._download_with_progress(url, original_filename, file_size, progress_callback)
+                file_path = self._download_with_improved_progress(url, original_filename, file_size, progress_callback)
             else:
-                file_path = self.mega_client.download_url(url, dest_path=self.temp_dir)
+                # Fallback to simple download without progress tracking
+                file_path = self._download_simple(url, original_filename)
 
             if not file_path or not os.path.exists(file_path):
                 error_msg = "Download failed: File not found after download"
                 self.logger.error(error_msg)
                 return False, None, error_msg
 
-            # Convert Path object to string if necessary
-            if not isinstance(file_path, str):
-                file_path = str(file_path)
-
             actual_file_size = os.path.getsize(file_path)
             self.logger.info(f"Download successful: {os.path.basename(file_path)} ({actual_file_size} bytes)")
 
-            # Rename file using hash to avoid long filenames
-            hashed_file_path = self._rename_with_hash(file_path)
-
-            return True, hashed_file_path, None
+            return True, file_path, None
 
         except OSError as e:
             # Handle specific case of filename too long
@@ -190,58 +308,208 @@ class MegaDownloader:
             self.logger.error(error_msg, exc_info=True)
             return False, None, error_msg
 
-    def _download_with_progress(self, url: str, filename: str, total_size: int, progress_callback: Callable) -> Optional[str]:
+    def _download_simple(self, url: str, original_filename: Optional[str]) -> Optional[str]:
         """
-        Download file with progress tracking.
+        Simple download without progress tracking, with proper filename handling.
 
         Args:
             url: MEGA URL to download
-            filename: Original filename
+            original_filename: Original filename from MEGA
+
+        Returns:
+            Path to downloaded file, or None if failed
+        """
+        try:
+            # Start download in a separate thread to avoid blocking
+            download_result: dict = {'file_path': None, 'error': None}
+
+            def download_worker():
+                try:
+                    # Use a temporary directory to avoid filename issues
+                    temp_download_dir = tempfile.mkdtemp()
+                    self.logger.debug(f"Using temporary download directory: {temp_download_dir}")
+
+                    # Download to temp directory first
+                    file_path = self.mega_client.download_url(url, dest_path=temp_download_dir)
+                    download_result['file_path'] = file_path
+                except Exception as e:
+                    download_result['error'] = str(e)
+
+            download_thread = threading.Thread(target=download_worker)
+            download_thread.start()
+            download_thread.join()
+
+            if download_result['error']:
+                self.logger.error(f"Download error: {download_result['error']}")
+                return None
+
+            temp_file_path = download_result['file_path']
+            if not temp_file_path or not os.path.exists(temp_file_path):
+                self.logger.error("Download failed: No file returned")
+                return None
+
+            # Convert Path object to string if necessary
+            if not isinstance(temp_file_path, str):
+                temp_file_path = str(temp_file_path)
+
+            # Move to our cache directory with hashed filename
+            if original_filename:
+                final_path = self._move_temp_file_to_cache(temp_file_path, original_filename)
+                if final_path:
+                    return final_path
+
+            # Fallback: move to cache with original filename if available
+            if original_filename:
+                try:
+                    final_path = os.path.join(self.temp_dir, os.path.basename(original_filename))
+                    shutil.move(temp_file_path, final_path)
+                    return final_path
+                except Exception as e:
+                    self.logger.warning(f"Failed to move with original filename: {e}")
+
+            # Last resort: move with a generic name
+            try:
+                final_path = os.path.join(self.temp_dir, f"downloaded_file_{int(time.time())}")
+                shutil.move(temp_file_path, final_path)
+                return final_path
+            except Exception as e:
+                self.logger.error(f"Failed to move file: {e}")
+                return None
+
+        except Exception as e:
+            self.logger.error(f"Simple download failed: {e}")
+            return None
+
+    def _download_with_improved_progress(self, url: str, original_filename: str, total_size: int, progress_callback: Callable) -> Optional[str]:
+        """
+        Download file with improved progress tracking that monitors actual temp files.
+
+        Args:
+            url: MEGA URL to download
+            original_filename: Original filename from MEGA
             total_size: Total file size in bytes
             progress_callback: Progress callback function
 
         Returns:
-            Path to downloaded file
+            Path to downloaded file, or None if failed
         """
-        # Since mega.py doesn't support progress callbacks directly,
-        # we'll simulate progress by monitoring the file size during download
-        download_thread = None
-        file_path = None
+        try:
+            self.logger.info(f"Starting download with progress tracking: {original_filename}")
 
-        def download_worker():
-            nonlocal file_path
-            file_path = self.mega_client.download_url(url, dest_path=self.temp_dir)
+            # Get baseline of existing temp files before download
+            baseline_files = self._scan_temp_files()
+            self.logger.debug(f"Baseline temp files: {len(baseline_files)}")
 
-        # Start download in a separate thread
-        download_thread = threading.Thread(target=download_worker)
-        download_thread.start()
+            # Start download in a separate thread
+            download_result: dict = {'file_path': None, 'error': None, 'started': False}
 
-        # Monitor progress
-        start_time = time.time()
+            def download_worker():
+                try:
+                    download_result['started'] = True
+                    # Use a temporary directory to avoid filename issues
+                    temp_download_dir = tempfile.mkdtemp()
+                    self.logger.debug(f"Using temporary download directory: {temp_download_dir}")
+
+                    # Download to temp directory
+                    file_path = self.mega_client.download_url(url, dest_path=temp_download_dir)
+                    download_result['file_path'] = file_path
+                except Exception as e:
+                    download_result['error'] = str(e)
+
+            download_thread = threading.Thread(target=download_worker)
+            download_thread.start()
+
+            # Wait for download to start
+            start_time = time.time()
+            while not download_result['started'] and time.time() - start_time < 10:
+                time.sleep(0.1)
+
+            if not download_result['started']:
+                self.logger.warning("Download did not start within 10 seconds")
+
+            # Try to detect the new temp file created by mega.py
+            temp_file_path = self._detect_new_temp_file(baseline_files, timeout=30)
+
+            if temp_file_path:
+                self.logger.info(f"Monitoring temp file: {temp_file_path}")
+                # Monitor the detected temp file for progress
+                self._monitor_temp_file_progress(temp_file_path, total_size, progress_callback, download_thread)
+            else:
+                self.logger.warning("Could not detect temp file, using estimated progress")
+                # Fallback to estimated progress
+                self._simulate_progress(total_size, progress_callback, download_thread)
+
+            # Wait for download to complete
+            download_thread.join()
+
+            if download_result['error']:
+                self.logger.error(f"Download error: {download_result['error']}")
+                return None
+
+            temp_file_path = download_result['file_path']
+            if not temp_file_path or not os.path.exists(temp_file_path):
+                self.logger.error("Download failed: No file returned")
+                return None
+
+            # Convert Path object to string if necessary
+            if not isinstance(temp_file_path, str):
+                temp_file_path = str(temp_file_path)
+
+            # Final progress update
+            try:
+                if asyncio.iscoroutinefunction(progress_callback):
+                    # For async callbacks, we need to schedule them properly
+                    try:
+                        # Try to get the current event loop
+                        loop = asyncio.get_running_loop()
+                        # Schedule the coroutine to run in the loop
+                        asyncio.run_coroutine_threadsafe(
+                            progress_callback(total_size, total_size, 0), loop
+                        )
+                    except RuntimeError:
+                        # No running loop, create a new one
+                        loop = asyncio.new_event_loop()
+                        asyncio.set_event_loop(loop)
+                        try:
+                            loop.run_until_complete(progress_callback(total_size, total_size, 0))
+                        finally:
+                            loop.close()
+                else:
+                    progress_callback(total_size, total_size, 0)
+            except Exception as e:
+                self.logger.warning(f"Final progress callback error: {e}")
+
+            # Move to our cache directory with hashed filename
+            final_path = self._move_temp_file_to_cache(temp_file_path, original_filename)
+            if final_path:
+                return final_path
+
+            # Fallback: return the temp file path
+            return temp_file_path
+
+        except Exception as e:
+            self.logger.error(f"Download with progress failed: {e}")
+            return None
+
+    def _monitor_temp_file_progress(self, temp_file_path: str, total_size: int, progress_callback: Callable, download_thread: threading.Thread) -> None:
+        """
+        Monitor the progress of a temporary file during download.
+
+        Args:
+            temp_file_path: Path to the temporary file to monitor
+            total_size: Total expected file size
+            progress_callback: Progress callback function
+            download_thread: Download thread to check if still running
+        """
         last_size = 0
-        last_time = start_time
+        last_time = time.time()
 
-        # Try to find the downloading file
-        temp_file_path = None
-        if filename:
-            # Look for temporary files that might be the download
-            for i in range(30):  # Wait up to 30 seconds for download to start
-                time.sleep(1)
-                for temp_file in os.listdir(self.temp_dir):
-                    temp_path = os.path.join(self.temp_dir, temp_file)
-                    if os.path.isfile(temp_path) and temp_file.startswith('megapy_'):
-                        temp_file_path = temp_path
-                        break
-                if temp_file_path:
-                    break
-
-        # Monitor file size growth
         while download_thread.is_alive():
             try:
                 current_time = time.time()
                 current_size = 0
 
-                if temp_file_path and os.path.exists(temp_file_path):
+                if os.path.exists(temp_file_path):
                     current_size = os.path.getsize(temp_file_path)
 
                 # Calculate speed
@@ -253,11 +521,22 @@ class MegaDownloader:
                     # Call progress callback
                     try:
                         if asyncio.iscoroutinefunction(progress_callback):
-                            # Run async callback in a thread-safe way
-                            loop = asyncio.new_event_loop()
-                            asyncio.set_event_loop(loop)
-                            loop.run_until_complete(progress_callback(current_size, total_size, speed))
-                            loop.close()
+                            # For async callbacks, we need to schedule them properly
+                            try:
+                                # Try to get the current event loop
+                                loop = asyncio.get_running_loop()
+                                # Schedule the coroutine to run in the loop
+                                asyncio.run_coroutine_threadsafe(
+                                    progress_callback(current_size, total_size, speed), loop
+                                )
+                            except RuntimeError:
+                                # No running loop, create a new one
+                                loop = asyncio.new_event_loop()
+                                asyncio.set_event_loop(loop)
+                                try:
+                                    loop.run_until_complete(progress_callback(current_size, total_size, speed))
+                                finally:
+                                    loop.close()
                         else:
                             progress_callback(current_size, total_size, speed)
                     except Exception as e:
@@ -269,27 +548,59 @@ class MegaDownloader:
                 time.sleep(0.5)  # Check every 0.5 seconds
 
             except Exception as e:
-                self.logger.warning(f"Error monitoring download progress: {e}")
+                self.logger.warning(f"Error monitoring temp file progress: {e}")
                 time.sleep(1)
 
-        # Wait for download to complete
-        download_thread.join()
+    def _simulate_progress(self, total_size: int, progress_callback: Callable, download_thread: threading.Thread) -> None:
+        """
+        Simulate download progress when actual temp file cannot be monitored.
 
-        # Final progress update
-        if progress_callback and file_path and os.path.exists(file_path):
-            final_size = os.path.getsize(file_path)
+        Args:
+            total_size: Total expected file size
+            progress_callback: Progress callback function
+            download_thread: Download thread to check if still running
+        """
+        start_time = time.time()
+        estimated_duration = max(total_size / (2 * 1024 * 1024), 10)  # Estimate based on 2MB/s, minimum 10 seconds
+
+        while download_thread.is_alive():
             try:
-                if asyncio.iscoroutinefunction(progress_callback):
-                    loop = asyncio.new_event_loop()
-                    asyncio.set_event_loop(loop)
-                    loop.run_until_complete(progress_callback(final_size, final_size, 0))
-                    loop.close()
-                else:
-                    progress_callback(final_size, final_size, 0)
-            except Exception as e:
-                self.logger.warning(f"Final progress callback error: {e}")
+                elapsed = time.time() - start_time
+                progress = min((elapsed / estimated_duration) * 100, 95)  # Cap at 95% until download completes
+                current_size = int((progress / 100) * total_size)
+                speed = total_size / estimated_duration
 
-        return file_path
+                # Call progress callback
+                try:
+                    if asyncio.iscoroutinefunction(progress_callback):
+                        # For async callbacks, we need to schedule them properly
+                        try:
+                            # Try to get the current event loop
+                            loop = asyncio.get_running_loop()
+                            # Schedule the coroutine to run in the loop
+                            asyncio.run_coroutine_threadsafe(
+                                progress_callback(current_size, total_size, speed), loop
+                            )
+                        except RuntimeError:
+                            # No running loop, create a new one
+                            loop = asyncio.new_event_loop()
+                            asyncio.set_event_loop(loop)
+                            try:
+                                loop.run_until_complete(progress_callback(current_size, total_size, speed))
+                            finally:
+                                loop.close()
+                    else:
+                        progress_callback(current_size, total_size, speed)
+                except Exception as e:
+                    self.logger.warning(f"Progress callback error: {e}")
+
+                time.sleep(1)  # Update every second
+
+            except Exception as e:
+                self.logger.warning(f"Error simulating progress: {e}")
+                time.sleep(1)
+
+
 
     def _hash_filename(self, filename: str) -> str:
         """
