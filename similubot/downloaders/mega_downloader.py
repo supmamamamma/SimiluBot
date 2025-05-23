@@ -6,7 +6,9 @@ import re
 import subprocess
 import uuid
 from datetime import datetime
-from typing import Optional, Tuple, Dict, List, Any
+from typing import Optional, Tuple, Dict, List, Any, Callable
+
+from similubot.progress.base import ProgressCallback
 
 class MegaDownloader:
     """
@@ -132,6 +134,107 @@ class MegaDownloader:
         except Exception as e:
             error_msg = f"Error running command: {str(e)}"
             self.logger.error(error_msg)
+            return False, "", error_msg
+
+    def _run_megacmd_command_with_progress(
+        self,
+        command: list,
+        progress_tracker,
+        timeout: int = 300
+    ) -> Tuple[bool, str, str]:
+        """
+        Run a MegaCMD command with real-time progress tracking.
+
+        Args:
+            command: List of command arguments
+            progress_tracker: Progress tracker to update with output
+            timeout: Command timeout in seconds
+
+        Returns:
+            Tuple of (success, stdout, stderr)
+        """
+        try:
+            self.logger.debug(f"Running MegaCMD command with progress: {' '.join(command)}")
+
+            # Start the process
+            process = subprocess.Popen(
+                command,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                cwd=self.temp_dir,
+                bufsize=1,  # Line buffered
+                universal_newlines=True
+            )
+
+            stdout_lines = []
+            stderr_lines = []
+
+            # Read output in real-time using threading (works on all platforms)
+            import threading
+            import queue
+
+            stdout_queue = queue.Queue()
+            stderr_queue = queue.Queue()
+
+            def read_stdout():
+                for line in iter(process.stdout.readline, ''):
+                    stdout_queue.put(line)
+                    progress_tracker.parse_output(line)
+                process.stdout.close()
+
+            def read_stderr():
+                for line in iter(process.stderr.readline, ''):
+                    stderr_queue.put(line)
+                    progress_tracker.parse_output(line)
+                process.stderr.close()
+
+            stdout_thread = threading.Thread(target=read_stdout)
+            stderr_thread = threading.Thread(target=read_stderr)
+
+            stdout_thread.start()
+            stderr_thread.start()
+
+            # Wait for process to complete
+            try:
+                process.wait(timeout=timeout)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                raise
+
+            # Wait for threads to finish
+            stdout_thread.join(timeout=5)
+            stderr_thread.join(timeout=5)
+
+            # Collect output
+            while not stdout_queue.empty():
+                stdout_lines.append(stdout_queue.get())
+            while not stderr_queue.empty():
+                stderr_lines.append(stderr_queue.get())
+
+            # Get final return code
+            return_code = process.returncode
+            stdout = ''.join(stdout_lines)
+            stderr = ''.join(stderr_lines)
+
+            success = return_code == 0
+
+            if success:
+                self.logger.debug(f"Command succeeded: {stdout}")
+            else:
+                self.logger.error(f"Command failed (code {return_code}): {stderr}")
+
+            return success, stdout, stderr
+
+        except subprocess.TimeoutExpired:
+            error_msg = f"Command timed out after {timeout} seconds"
+            self.logger.error(error_msg)
+            progress_tracker.fail(error_msg)
+            return False, "", error_msg
+        except Exception as e:
+            error_msg = f"Error running command: {str(e)}"
+            self.logger.error(error_msg)
+            progress_tracker.fail(error_msg)
             return False, "", error_msg
 
     def _init_tracking_system(self) -> None:
@@ -482,6 +585,179 @@ class MegaDownloader:
             except:
                 pass  # Don't let tracking errors mask the original error
 
+            return False, None, error_msg
+
+    def download_with_progress(
+        self,
+        url: str,
+        progress_callback: Optional[ProgressCallback] = None
+    ) -> Tuple[bool, Optional[str], Optional[str]]:
+        """
+        Download a file from a MEGA link with real-time progress tracking.
+
+        Args:
+            url: MEGA link to download
+            progress_callback: Optional callback function for progress updates
+
+        Returns:
+            Tuple containing:
+                - Success status (True/False)
+                - Path to downloaded file if successful, None otherwise
+                - Error message if failed, None otherwise
+        """
+        if not self.is_mega_link(url):
+            error_msg = f"Invalid MEGA link: {url}"
+            self.logger.error(error_msg)
+            return False, None, error_msg
+
+        # Import here to avoid circular imports
+        from similubot.progress.mega_tracker import MegaProgressTracker
+
+        # Create progress tracker
+        progress_tracker = MegaProgressTracker()
+        if progress_callback:
+            progress_tracker.add_callback(progress_callback)
+
+        # Generate unique download ID
+        download_id = str(uuid.uuid4())
+
+        # Load tracking data
+        tracking_data = self._load_tracking_data()
+        downloads = tracking_data.get("downloads", {})
+
+        # Record download start
+        download_info = {
+            "url": url,
+            "download_id": download_id,
+            "started_at": datetime.now().isoformat(),
+            "status": "in_progress"
+        }
+        downloads[download_id] = download_info
+        self._save_tracking_data(tracking_data)
+
+        # Start progress tracking
+        progress_tracker.start()
+
+        try:
+            self.logger.info(f"Downloading file from MEGA: {url} (ID: {download_id})")
+            self.logger.debug(f"Download destination: {self.temp_dir}")
+
+            # Get list of files before download
+            files_before = set()
+            try:
+                files_before = {f for f in os.listdir(self.temp_dir)
+                              if os.path.isfile(os.path.join(self.temp_dir, f)) and f != "download_tracker.json"}
+            except OSError:
+                pass
+
+            # Escape the URL for shell execution
+            escaped_url = self._escape_mega_url(url)
+
+            # Use mega-get to download the file with progress tracking
+            command = ["mega-get", escaped_url, self.temp_dir]
+            success, stdout, stderr = self._run_megacmd_command_with_progress(
+                command, progress_tracker, timeout=1200
+            )
+
+            if not success:
+                error_msg = f"MegaCMD download failed: {stderr}"
+                self.logger.error(error_msg)
+
+                # Update tracking data with failure
+                downloads[download_id]["status"] = "failed"
+                downloads[download_id]["error"] = error_msg
+                downloads[download_id]["failed_at"] = datetime.now().isoformat()
+                self._save_tracking_data(tracking_data)
+
+                progress_tracker.fail(error_msg)
+                return False, None, error_msg
+
+            # Find newly downloaded files
+            files_after = set()
+            try:
+                files_after = {f for f in os.listdir(self.temp_dir)
+                             if os.path.isfile(os.path.join(self.temp_dir, f)) and f != "download_tracker.json"}
+            except OSError:
+                files_after = set()
+
+            new_files = files_after - files_before
+
+            if not new_files:
+                error_msg = "Download completed but no new files found in temp directory"
+                self.logger.error(error_msg)
+
+                # Update tracking data with failure
+                downloads[download_id]["status"] = "failed"
+                downloads[download_id]["error"] = error_msg
+                downloads[download_id]["failed_at"] = datetime.now().isoformat()
+                self._save_tracking_data(tracking_data)
+
+                progress_tracker.fail(error_msg)
+                return False, None, error_msg
+
+            # Handle multiple files (take the largest one, likely the main file)
+            if len(new_files) > 1:
+                self.logger.warning(f"Multiple files downloaded: {list(new_files)}")
+
+            # Select the downloaded file (largest if multiple)
+            file_sizes = {}
+            for filename in new_files:
+                file_path = os.path.join(self.temp_dir, filename)
+                try:
+                    file_sizes[filename] = os.path.getsize(file_path)
+                except OSError:
+                    file_sizes[filename] = 0
+
+            selected_filename = max(file_sizes.keys(), key=lambda f: file_sizes[f])
+            file_path = os.path.join(self.temp_dir, selected_filename)
+
+            if not os.path.exists(file_path):
+                error_msg = "Download failed: Selected file not found after download"
+                self.logger.error(error_msg)
+
+                # Update tracking data with failure
+                downloads[download_id]["status"] = "failed"
+                downloads[download_id]["error"] = error_msg
+                downloads[download_id]["failed_at"] = datetime.now().isoformat()
+                self._save_tracking_data(tracking_data)
+
+                progress_tracker.fail(error_msg)
+                return False, None, error_msg
+
+            file_size = os.path.getsize(file_path)
+            self.logger.info(f"Download successful: {os.path.basename(file_path)} ({file_size} bytes)")
+
+            # Update tracking data with success
+            downloads[download_id]["status"] = "completed"
+            downloads[download_id]["filename"] = selected_filename
+            downloads[download_id]["file_path"] = file_path
+            downloads[download_id]["file_size"] = file_size
+            downloads[download_id]["completed_at"] = datetime.now().isoformat()
+
+            # Record all downloaded files if multiple
+            if len(new_files) > 1:
+                downloads[download_id]["all_files"] = list(new_files)
+
+            self._save_tracking_data(tracking_data)
+
+            # Complete progress tracking
+            progress_tracker.complete(f"Downloaded {os.path.basename(file_path)} ({file_size} bytes)")
+            return True, file_path, None
+
+        except Exception as e:
+            error_msg = f"Download failed: {str(e)}"
+            self.logger.error(error_msg, exc_info=True)
+
+            # Update tracking data with failure
+            try:
+                downloads[download_id]["status"] = "failed"
+                downloads[download_id]["error"] = error_msg
+                downloads[download_id]["failed_at"] = datetime.now().isoformat()
+                self._save_tracking_data(tracking_data)
+            except:
+                pass  # Don't let tracking errors mask the original error
+
+            progress_tracker.fail(error_msg)
             return False, None, error_msg
 
     def get_file_info(self, url: str) -> Tuple[bool, Optional[dict], Optional[str]]:
