@@ -20,7 +20,7 @@ class ProgressStatus(Enum):
 class ProgressInfo:
     """
     Container for progress information.
-    
+
     Attributes:
         operation: Name of the operation (e.g., "download", "convert", "upload")
         status: Current status of the operation
@@ -43,7 +43,7 @@ class ProgressInfo:
     message: str = ""
     details: Dict[str, Any] = None
     timestamp: float = None
-    
+
     def __post_init__(self):
         """Initialize timestamp if not provided."""
         if self.timestamp is None:
@@ -59,15 +59,15 @@ ProgressCallback = Callable[[ProgressInfo], None]
 class ProgressTracker(ABC):
     """
     Abstract base class for progress tracking.
-    
+
     Provides common functionality for tracking progress of long-running operations
     and notifying callbacks about progress updates.
     """
-    
+
     def __init__(self, operation_name: str):
         """
         Initialize the progress tracker.
-        
+
         Args:
             operation_name: Name of the operation being tracked
         """
@@ -75,30 +75,30 @@ class ProgressTracker(ABC):
         self.callbacks: list[ProgressCallback] = []
         self.current_progress: Optional[ProgressInfo] = None
         self.start_time: Optional[float] = None
-        
+
     def add_callback(self, callback: ProgressCallback) -> None:
         """
         Add a progress callback.
-        
+
         Args:
             callback: Function to call when progress updates
         """
         self.callbacks.append(callback)
-        
+
     def remove_callback(self, callback: ProgressCallback) -> None:
         """
         Remove a progress callback.
-        
+
         Args:
             callback: Function to remove from callbacks
         """
         if callback in self.callbacks:
             self.callbacks.remove(callback)
-            
+
     def _notify_callbacks(self, progress: ProgressInfo) -> None:
         """
         Notify all callbacks about progress update.
-        
+
         Args:
             progress: Progress information to send to callbacks
         """
@@ -111,7 +111,7 @@ class ProgressTracker(ABC):
                 import logging
                 logger = logging.getLogger(f"similubot.progress.{self.operation_name}")
                 logger.error(f"Progress callback failed: {e}", exc_info=True)
-                
+
     def start(self) -> None:
         """Start tracking progress."""
         self.start_time = time.time()
@@ -121,19 +121,20 @@ class ProgressTracker(ABC):
             message=f"Starting {self.operation_name}..."
         )
         self._notify_callbacks(progress)
-        
+
     def update(
         self,
-        percentage: float = None,
-        current_size: int = None,
-        total_size: int = None,
-        speed: float = None,
-        message: str = None,
-        details: Dict[str, Any] = None
+        percentage: Optional[float] = None,
+        current_size: Optional[int] = None,
+        total_size: Optional[int] = None,
+        speed: Optional[float] = None,
+        message: Optional[str] = None,
+        details: Optional[Dict[str, Any]] = None,
+        eta: Optional[float] = None
     ) -> None:
         """
         Update progress information.
-        
+
         Args:
             percentage: Progress percentage (0-100)
             current_size: Current size processed in bytes
@@ -141,14 +142,14 @@ class ProgressTracker(ABC):
             speed: Current speed in bytes/second
             message: Human-readable status message
             details: Additional operation-specific details
+            eta: Estimated time remaining in seconds (optional, calculated if not provided)
         """
-        # Calculate ETA if we have speed and remaining size
-        eta = None
-        if speed and speed > 0 and total_size and current_size:
+        # Calculate ETA if not provided and we have speed and remaining size
+        if eta is None and speed and speed > 0 and total_size and current_size:
             remaining_size = total_size - current_size
             if remaining_size > 0:
                 eta = remaining_size / speed
-                
+
         progress = ProgressInfo(
             operation=self.operation_name,
             status=ProgressStatus.IN_PROGRESS,
@@ -161,11 +162,11 @@ class ProgressTracker(ABC):
             details=details or {}
         )
         self._notify_callbacks(progress)
-        
-    def complete(self, message: str = None) -> None:
+
+    def complete(self, message: Optional[str] = None) -> None:
         """
         Mark operation as completed.
-        
+
         Args:
             message: Completion message
         """
@@ -176,11 +177,11 @@ class ProgressTracker(ABC):
             message=message or f"{self.operation_name} completed successfully"
         )
         self._notify_callbacks(progress)
-        
+
     def fail(self, error_message: str) -> None:
         """
         Mark operation as failed.
-        
+
         Args:
             error_message: Error message describing the failure
         """
@@ -190,11 +191,11 @@ class ProgressTracker(ABC):
             message=f"{self.operation_name} failed: {error_message}"
         )
         self._notify_callbacks(progress)
-        
-    def cancel(self, message: str = None) -> None:
+
+    def cancel(self, message: Optional[str] = None) -> None:
         """
         Mark operation as cancelled.
-        
+
         Args:
             message: Cancellation message
         """
@@ -204,24 +205,24 @@ class ProgressTracker(ABC):
             message=message or f"{self.operation_name} was cancelled"
         )
         self._notify_callbacks(progress)
-        
+
     @abstractmethod
     def parse_output(self, output_line: str) -> bool:
         """
         Parse a line of output from the operation.
-        
+
         Args:
             output_line: Line of output to parse
-            
+
         Returns:
             True if the line contained progress information, False otherwise
         """
         pass
-        
+
     def get_current_progress(self) -> Optional[ProgressInfo]:
         """
         Get the current progress information.
-        
+
         Returns:
             Current progress info or None if no progress has been reported
         """

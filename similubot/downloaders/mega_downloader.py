@@ -654,7 +654,8 @@ class MegaDownloader:
             escaped_url = self._escape_mega_url(url)
 
             # Use mega-get to download the file with progress tracking
-            command = ["mega-get", escaped_url, self.temp_dir]
+            # don't need self.temp_dir here since we use it in self._run_megacmd_command_with_progress
+            command = ["mega-get", escaped_url]
             success, stdout, stderr = self._run_megacmd_command_with_progress(
                 command, progress_tracker, timeout=1200
             )
