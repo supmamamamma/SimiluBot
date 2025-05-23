@@ -13,6 +13,7 @@ from similubot.converters.audio_converter import AudioConverter
 from similubot.uploaders.catbox_uploader import CatboxUploader
 from similubot.uploaders.discord_uploader import DiscordUploader
 from similubot.utils.config_manager import ConfigManager
+from similubot.utils.progress_tracker import ProgressTracker, ProgressCallback, ProgressInfo, ProgressStatus
 
 class SimiluBot:
     """
@@ -59,7 +60,7 @@ class SimiluBot:
             self.logger.debug(f"Created temporary directory: {temp_dir}")
 
         # Initialize downloader
-        self.downloader = MegaDownloader(temp_dir=temp_dir)
+        self.downloader = MegaDownloader(config=self.config, temp_dir=temp_dir)
 
         # Initialize converter
         self.converter = AudioConverter(
@@ -166,7 +167,7 @@ class SimiluBot:
         bitrate: Optional[int] = None
     ):
         """
-        Process a MEGA link.
+        Process a MEGA link with progress tracking.
 
         Args:
             message: Discord message containing the link
@@ -178,64 +179,109 @@ class SimiluBot:
             bitrate = self.config.get_default_bitrate()
 
         # Send initial response
-        response = await message.reply(f"Processing MEGA link... (bitrate: {bitrate} kbps)")
+        response = await message.reply(f"🔄 Processing MEGA link... (bitrate: {bitrate} kbps)")
+
+        file_path: Optional[str] = None
+        converted_file: Optional[str] = None
 
         try:
-            # Update status
-            await response.edit(content="Downloading file from MEGA...")
+            # Step 1: Download file with progress tracking
+            download_tracker = ProgressTracker(response, "MEGA Download")
+            await download_tracker.start_operation(message="Initializing download...")
+
+            # Create progress callback for download
+            download_callback = ProgressCallback(download_tracker)
 
             # Download file
-            success, file_path, error = self.downloader.download(url)
+            success, file_path, error = self.downloader.download(url, download_callback)
 
             if not success:
-                await response.edit(content=f"Error downloading file: {error}")
+                await download_tracker.error_operation(f"Download failed: {error}")
                 return
 
-            # Update status
-            await response.edit(content=f"Converting file to AAC ({bitrate} kbps)...")
+            await download_tracker.complete_operation("Download completed successfully!")
+
+            # Step 2: Convert file with progress tracking
+            conversion_tracker = ProgressTracker(response, "Audio Conversion")
+            await conversion_tracker.start_operation(
+                filename=os.path.basename(file_path) if file_path else "",
+                message=f"Converting to AAC ({bitrate} kbps)..."
+            )
+
+            # Create progress callback for conversion
+            conversion_callback = ProgressCallback(conversion_tracker)
 
             # Convert file
-            success, converted_file, error = self.converter.convert_to_aac(file_path, bitrate)
-
-            if not success:
-                await response.edit(content=f"Error converting file: {error}")
+            if not file_path:
+                await conversion_tracker.error_operation("No file to convert")
                 return
 
-            # Update status
+            success, converted_file, error = self.converter.convert_to_aac(
+                file_path, bitrate, progress_callback=conversion_callback
+            )
+
+            if not success:
+                await conversion_tracker.error_operation(f"Conversion failed: {error}")
+                return
+
+            await conversion_tracker.complete_operation("Conversion completed successfully!")
+
+            # Step 3: Upload file with progress tracking
             upload_service = self.config.get_default_upload_service()
-            await response.edit(content=f"Uploading file to {upload_service.capitalize()}...")
+            upload_tracker = ProgressTracker(response, f"{upload_service.capitalize()} Upload")
+            await upload_tracker.start_operation(
+                filename=os.path.basename(converted_file) if converted_file else "",
+                message=f"Uploading to {upload_service.capitalize()}..."
+            )
+
+            # Create progress callback for upload
+            upload_callback = ProgressCallback(upload_tracker)
 
             # Upload file
+            if not converted_file:
+                await upload_tracker.error_operation("No file to upload")
+                return
+
             if upload_service == "catbox":
-                success, url, error = self.catbox_uploader.upload(converted_file)
+                success, result_url, error = self.catbox_uploader.upload(converted_file, upload_callback)
 
                 if not success:
-                    await response.edit(content=f"Error uploading file: {error}")
+                    await upload_tracker.error_operation(f"Upload failed: {error}")
                     return
 
-                # Send success message
+                # Send success message with download link
                 file_name = os.path.basename(converted_file)
-                await response.edit(
-                    content=f"✅ Converted and uploaded: {file_name} ({bitrate} kbps)\n"
-                            f"Download: {url}"
+                await upload_tracker.complete_operation(
+                    message="Upload completed successfully!",
+                    final_info=f"**Download Link:** {result_url}\n**File:** `{file_name}` ({bitrate} kbps)"
                 )
+
             else:  # discord
                 success, discord_msg, error = await self.discord_uploader.upload(
                     converted_file,
                     message.channel,
-                    content=f"✅ Converted file ({bitrate} kbps)"
+                    content=f"✅ Converted file ({bitrate} kbps)",
+                    progress_callback=upload_callback
                 )
 
                 if not success:
-                    await response.edit(content=f"Error uploading file: {error}")
+                    await upload_tracker.error_operation(f"Upload failed: {error}")
                     return
 
-                # Delete the processing message
-                await response.delete()
+                await upload_tracker.complete_operation("Upload completed successfully!")
+
+                # Delete the processing message since file is uploaded directly
+                try:
+                    await response.delete()
+                except:
+                    pass  # Ignore if message is already deleted
 
         except Exception as e:
             self.logger.error(f"Error processing MEGA link: {e}", exc_info=True)
-            await response.edit(content=f"An error occurred while processing the MEGA link: {str(e)}")
+
+            # Create error tracker if we don't have one
+            error_tracker = ProgressTracker(response, "Processing Error")
+            await error_tracker.error_operation(f"An unexpected error occurred: {str(e)}")
 
         finally:
             # Clean up temporary files
