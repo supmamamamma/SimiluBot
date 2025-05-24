@@ -71,12 +71,21 @@ Generate an image from a text prompt:
 !nai cyberpunk cityscape at night, neon lights
 ```
 
+### Advanced Command Syntax
+
+```
+!nai <prompt> [discord/catbox] [char1:[description] char2:[description] ...] [size:portrait/landscape/square]
+```
+
 ### Command Features
 
 - **Prompt Length**: Supports prompts up to several hundred characters
 - **Progress Updates**: Real-time progress shown in Discord embed
 - **Multiple Images**: Can generate multiple images if configured
 - **Automatic Upload**: Images automatically uploaded to configured service
+- **Multi-Character**: Generate images with multiple positioned characters
+- **Size Control**: Specify image dimensions (portrait/landscape/square)
+- **Parameter Flexibility**: All parameters are position-independent
 
 ### Example Usage
 
@@ -85,20 +94,95 @@ User: !nai a majestic dragon flying over a medieval castle
 
 Bot: 🎨 AI Image Generation
      Generating image from prompt: `a majestic dragon flying over a medieval castle`
-     
+
      [Progress updates every few seconds]
      🔄 Generating image with AI...
      🖼️ Generating image details...
      ✨ Adding final touches...
      📤 Uploading to catbox...
-     
+
      ✅ Image Generation Complete
      Your AI-generated image is ready!
-     
+
      🎨 Prompt: `a majestic dragon flying over a medieval castle`
      🤖 Model: nai-diffusion-3
      📊 Images: 1
      🔗 Download Link: https://files.catbox.moe/abc123.png
+```
+
+### Multi-Character Generation
+
+Generate images with multiple characters positioned in the scene:
+
+```
+!nai <prompt> [discord/catbox] char1:[description] char2:[description] ...
+```
+
+#### Examples
+
+```
+# Two characters
+!nai fantasy tavern char1:[elf bartender] char2:[dwarf customer]
+
+# Three characters with upload service
+!nai school classroom char1:[teacher] char2:[student 1] char3:[student 2] discord
+
+# Complex descriptions
+!nai cyberpunk street char1:[hacker with neon hair, leather jacket] char2:[android with glowing eyes, metallic skin]
+```
+
+#### Character Features
+
+- **Automatic Positioning**: Characters positioned using intelligent coordinate algorithms
+- **Support Range**: 1-8 characters per image
+- **Natural Composition**: Coordinates optimized for realistic scene layout
+- **Individual Control**: Each character gets separate description and positioning
+
+### Image Size Specification
+
+Control the dimensions of generated images:
+
+```
+!nai <prompt> [discord/catbox] [char1:[desc]...] [size:portrait/landscape/square]
+```
+
+#### Size Options
+
+| Size | Dimensions | Aspect Ratio | Best For |
+|------|------------|--------------|----------|
+| `size:portrait` (default) | 832×1216 | 2:3 | Character portraits, vertical compositions |
+| `size:landscape` | 1216×832 | 3:2 | Scenery, wide shots, desktop wallpapers |
+| `size:square` | 1024×1024 | 1:1 | Social media, balanced compositions |
+
+#### Size Examples
+
+```
+# Landscape scenery
+!nai beautiful mountain vista size:landscape
+
+# Character portrait
+!nai anime girl with blue hair size:portrait discord
+
+# Square social media post
+!nai logo design size:square catbox
+
+# Multi-character landscape
+!nai group photo char1:[person 1] char2:[person 2] size:landscape
+```
+
+### Combined Features
+
+All parameters can be used together in any order:
+
+```
+# All features combined
+!nai epic fantasy battle char1:[dragon rider with armor] char2:[magical beast with wings] size:landscape discord
+
+# Different parameter order
+!nai school scene size:portrait char1:[teacher at blackboard] char2:[student raising hand] catbox
+
+# Case insensitive
+!nai test scene CHAR1:[warrior] SIZE:SQUARE DISCORD
 ```
 
 ## Architecture

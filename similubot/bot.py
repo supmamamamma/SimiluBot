@@ -160,8 +160,9 @@ class SimiluBot:
                 nai_description += f"\nDefault upload: {self.config.get_novelai_upload_service()}"
                 nai_description += "\nAdd `discord` or `catbox` to override upload service."
                 nai_description += "\nAdd `char1:[description] char2:[description]` for multi-character generation."
+                nai_description += "\nAdd `size:portrait/landscape/square` to specify image dimensions."
                 embed.add_field(
-                    name=f"{self.bot.command_prefix}nai <prompt> [discord/catbox] [char1:[desc] char2:[desc]...]",
+                    name=f"{self.bot.command_prefix}nai <prompt> [discord/catbox] [char1:[desc]...] [size:xxx]",
                     value=nai_description,
                     inline=False
                 )
@@ -196,9 +197,10 @@ class SimiluBot:
                 !nai <prompt> discord
                 !nai <prompt> catbox
                 !nai <prompt> [discord/catbox] char1:[description] char2:[description]
+                !nai <prompt> [discord/catbox] [char1:[desc]...] [size:portrait/landscape/square]
 
             Args:
-                args: Prompt text followed by optional upload service and character parameters
+                args: Prompt text followed by optional upload service, character parameters, and size specification
             """
             if not self.image_generator:
                 await ctx.reply("❌ NovelAI image generation is not configured. Please check your API key in the config.")
@@ -208,12 +210,13 @@ class SimiluBot:
                 await ctx.reply("❌ Please provide a prompt for image generation.")
                 return
 
-            # Parse arguments for upload service and character parameters
-            # Use regex to properly extract character parameters with spaces
+            # Parse arguments for upload service, character parameters, and size specification
+            # Use regex to properly extract parameters with spaces
             import re
 
             upload_service = None
             character_args = []
+            size_spec = None
             remaining_text = args.strip()
 
             # Extract upload service (discord/catbox) - must be a standalone word
@@ -221,6 +224,13 @@ class SimiluBot:
             if upload_match:
                 upload_service = upload_match.group(1).lower()
                 remaining_text = remaining_text.replace(upload_match.group(0), '', 1).strip()
+
+            # Extract size specification (size:portrait, size:landscape, size:square)
+            size_pattern = re.compile(r'\bsize:(portrait|landscape|square)\b', re.IGNORECASE)
+            size_match = size_pattern.search(remaining_text)
+            if size_match:
+                size_spec = size_match.group(1).lower()
+                remaining_text = size_pattern.sub('', remaining_text).strip()
 
             # Extract character parameters using regex
             char_pattern = re.compile(r'char(\d+):\[([^\]]+)\]', re.IGNORECASE)
@@ -247,7 +257,7 @@ class SimiluBot:
                         await ctx.reply(f"❌ Invalid character syntax: '{char_arg}'. Expected format: 'char1:[description]'")
                         return
 
-            await self._process_nai_generation(ctx.message, prompt, upload_service, character_args)
+            await self._process_nai_generation(ctx.message, prompt, upload_service, character_args, size_spec)
 
     async def _process_mega_link(
         self,
@@ -373,7 +383,8 @@ class SimiluBot:
         message: discord.Message,
         prompt: str,
         upload_service_override: Optional[str] = None,
-        character_args: Optional[List[str]] = None
+        character_args: Optional[List[str]] = None,
+        size_spec: Optional[str] = None
     ):
         """
         Process a NovelAI image generation request with real-time progress tracking.
@@ -383,6 +394,7 @@ class SimiluBot:
             prompt: Text prompt for image generation
             upload_service_override: Optional upload service override
             character_args: Optional list of character argument strings
+            size_spec: Optional size specification (portrait/landscape/square)
         """
         # Create initial progress embed
         generation_type = "Multi-character" if character_args else "Single-character"
@@ -405,6 +417,19 @@ class SimiluBot:
             # Get default parameters from config
             default_params = self.config.get_novelai_default_parameters()
             model = self.config.get_novelai_default_model()
+
+            # Apply size specification if provided
+            if size_spec:
+                size_dimensions = {
+                    'portrait': (832, 1216),
+                    'landscape': (1216, 832),
+                    'square': (1024, 1024)
+                }
+                if size_spec in size_dimensions:
+                    width, height = size_dimensions[size_spec]
+                    default_params['width'] = width
+                    default_params['height'] = height
+                    self.logger.info(f"Using {size_spec} size: {width}x{height}")
 
             if character_args:
                 self.logger.info(f"Starting NovelAI multi-character generation: '{prompt[:100]}...' with {len(character_args)} characters")
