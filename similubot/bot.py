@@ -3,7 +3,7 @@ import asyncio
 import logging
 import os
 import re
-from typing import Optional, List, Dict, Any, Union
+from typing import Optional, List, Dict, Any, Union, Tuple
 
 import discord
 from discord.ext import commands
@@ -320,8 +320,33 @@ class SimiluBot:
                 await self._send_error_embed(response, "Conversion Failed", error or "Unknown error")
                 return
 
-            # Step 3: Upload with progress
+            # Step 2.5: Optimize file size for CatBox if needed
             upload_service = self.config.get_mega_upload_service()
+            if upload_service == "catbox":
+                optimized_file, final_bitrate = await self._optimize_file_size_for_catbox(
+                    file_path, converted_file, bitrate, progress_callback
+                )
+                if optimized_file:
+                    # Clean up the original converted file if it was replaced
+                    if optimized_file != converted_file and os.path.exists(converted_file):
+                        try:
+                            os.remove(converted_file)
+                            self.logger.debug(f"Removed original converted file: {converted_file}")
+                        except Exception as e:
+                            self.logger.warning(f"Failed to remove original converted file: {e}")
+                    converted_file = optimized_file
+                    bitrate = final_bitrate
+                else:
+                    # Optimization failed - file is too large even at lowest bitrate
+                    await self._send_error_embed(
+                        response,
+                        "File Too Large",
+                        "The converted file exceeds CatBox's 200MB limit even at the lowest bitrate (96 kbps). "
+                        "Please try a shorter audio file or use Discord upload instead."
+                    )
+                    return
+
+            # Step 3: Upload with progress
             self.logger.info(f"Starting upload to {upload_service}: {converted_file}")
 
             if upload_service == "catbox":
@@ -377,6 +402,134 @@ class SimiluBot:
         finally:
             # Clean up temporary files
             self._cleanup_temp_files([file_path, converted_file])
+
+    async def _optimize_file_size_for_catbox(
+        self,
+        original_file: str,
+        converted_file: str,
+        current_bitrate: int,
+        progress_callback
+    ) -> Tuple[Optional[str], int]:
+        """
+        Optimize file size for CatBox upload by reducing bitrate if file is too large.
+
+        Args:
+            original_file: Path to the original downloaded file
+            converted_file: Path to the currently converted file
+            current_bitrate: Current bitrate used for conversion
+            progress_callback: Progress callback for updates
+
+        Returns:
+            Tuple containing:
+                - Path to optimized file (None if optimization failed)
+                - Final bitrate used
+        """
+        # CatBox file size limit (200MB)
+        CATBOX_SIZE_LIMIT = 200 * 1024 * 1024  # 200MB in bytes
+
+        # Bitrate hierarchy for optimization
+        BITRATE_HIERARCHY = [512, 384, 320, 256, 192, 128, 96]
+
+        try:
+            # Check current file size
+            current_size = os.path.getsize(converted_file)
+            self.logger.info(f"Checking file size: {self._format_file_size(current_size)} (limit: 200MB)")
+
+            # If file is within limit, return as-is
+            if current_size <= CATBOX_SIZE_LIMIT:
+                self.logger.info("File size is within CatBox limit, no optimization needed")
+                return converted_file, current_bitrate
+
+            self.logger.warning(f"File size ({self._format_file_size(current_size)}) exceeds CatBox limit, starting optimization")
+
+            # Find current bitrate position in hierarchy
+            try:
+                current_index = BITRATE_HIERARCHY.index(current_bitrate)
+            except ValueError:
+                # If current bitrate is not in hierarchy, find the closest lower one
+                current_index = -1
+                for i, bitrate in enumerate(BITRATE_HIERARCHY):
+                    if bitrate < current_bitrate:
+                        current_index = i
+                        break
+                if current_index == -1:
+                    current_index = 0  # Start from the highest available
+
+            # Try each lower bitrate
+            for i in range(current_index + 1, len(BITRATE_HIERARCHY)):
+                target_bitrate = BITRATE_HIERARCHY[i]
+                self.logger.info(f"Attempting optimization with {target_bitrate} kbps bitrate")
+
+                # Update progress
+                if progress_callback:
+                    await progress_callback(
+                        "optimization",
+                        f"🔧 Optimizing file size (trying {target_bitrate} kbps)...",
+                        0.5
+                    )
+
+                # Convert with lower bitrate
+                success, optimized_file, error = await asyncio.to_thread(
+                    self.converter.convert_to_aac_with_progress,
+                    original_file,
+                    target_bitrate,
+                    None,  # Use default output file path
+                    progress_callback
+                )
+
+                if not success or not optimized_file:
+                    self.logger.warning(f"Failed to convert with {target_bitrate} kbps: {error}")
+                    continue
+
+                # Check new file size
+                new_size = os.path.getsize(optimized_file)
+                self.logger.info(f"New file size with {target_bitrate} kbps: {self._format_file_size(new_size)}")
+
+                if new_size <= CATBOX_SIZE_LIMIT:
+                    self.logger.info(f"Successfully optimized file to {self._format_file_size(new_size)} with {target_bitrate} kbps")
+
+                    # Update progress
+                    if progress_callback:
+                        await progress_callback(
+                            "optimization",
+                            f"✅ File optimized to {target_bitrate} kbps ({self._format_file_size(new_size)})",
+                            1.0
+                        )
+
+                    return optimized_file, target_bitrate
+                else:
+                    # File still too large, clean up and try next bitrate
+                    try:
+                        os.remove(optimized_file)
+                        self.logger.debug(f"Removed oversized file: {optimized_file}")
+                    except Exception as e:
+                        self.logger.warning(f"Failed to remove oversized file: {e}")
+
+            # If we get here, even the lowest bitrate didn't work
+            self.logger.error("Failed to optimize file size even with lowest bitrate (96 kbps)")
+
+            # Update progress with failure
+            if progress_callback:
+                await progress_callback(
+                    "optimization",
+                    "❌ Unable to reduce file size below 200MB limit",
+                    1.0
+                )
+
+            return None, current_bitrate
+
+        except Exception as e:
+            self.logger.error(f"Error during file size optimization: {e}", exc_info=True)
+
+            # Update progress with error
+            if progress_callback:
+                await progress_callback(
+                    "optimization",
+                    f"❌ Optimization failed: {str(e)}",
+                    1.0
+                )
+
+            return None, current_bitrate
 
     async def _process_nai_generation(
         self,
