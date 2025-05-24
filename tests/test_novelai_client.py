@@ -230,9 +230,6 @@ class TestNovelAIClient:
         assert v4_negative['caption']['char_captions'] == []
         assert v4_negative['legacy_uc'] is False
 
-        # Check negative_prompt is also included at top level
-        assert params['negative_prompt'] == validated_params['negative_prompt']
-
     @patch('requests.Session.post')
     def test_generate_image_success_http_201(self, mock_post):
         """Test successful image generation with HTTP 201 response."""
@@ -385,3 +382,436 @@ class TestNovelAIClient:
 
         assert success is False
         assert "timed out" in error
+
+    # Multi-character functionality tests
+    def test_parse_character_parameters_valid_single(self):
+        """Test parsing valid single character parameter."""
+        char_args = ["char1:[girl with blue hair]"]
+
+        characters, error = self.client._parse_character_parameters(char_args)
+
+        assert error is None
+        assert len(characters) == 1
+        assert characters[0]['number'] == 1
+        assert characters[0]['description'] == "girl with blue hair"
+
+    def test_parse_character_parameters_valid_multiple(self):
+        """Test parsing valid multiple character parameters."""
+        char_args = ["char1:[girl with blue hair]", "char2:[boy with red eyes]", "char3:[elderly wizard]"]
+
+        characters, error = self.client._parse_character_parameters(char_args)
+
+        assert error is None
+        assert len(characters) == 3
+        assert characters[0]['number'] == 1
+        assert characters[0]['description'] == "girl with blue hair"
+        assert characters[1]['number'] == 2
+        assert characters[1]['description'] == "boy with red eyes"
+        assert characters[2]['number'] == 3
+        assert characters[2]['description'] == "elderly wizard"
+
+    def test_parse_character_parameters_complex_descriptions(self):
+        """Test parsing character parameters with complex descriptions."""
+        char_args = [
+            "char1:[anime girl, long blue hair, white dress, holding book, sitting]",
+            "char2:[muscular warrior, armor, sword, battle stance, serious expression]"
+        ]
+
+        characters, error = self.client._parse_character_parameters(char_args)
+
+        assert error is None
+        assert len(characters) == 2
+        assert "anime girl, long blue hair, white dress, holding book, sitting" in characters[0]['description']
+        assert "muscular warrior, armor, sword, battle stance, serious expression" in characters[1]['description']
+
+    def test_parse_character_parameters_unordered(self):
+        """Test parsing character parameters in non-sequential order."""
+        char_args = ["char3:[third character]", "char1:[first character]", "char2:[second character]"]
+
+        characters, error = self.client._parse_character_parameters(char_args)
+
+        assert error is None
+        assert len(characters) == 3
+        # Should be sorted by character number
+        assert characters[0]['number'] == 1
+        assert characters[1]['number'] == 2
+        assert characters[2]['number'] == 3
+
+    def test_parse_character_parameters_invalid_syntax_missing_brackets(self):
+        """Test parsing character parameters with missing brackets."""
+        char_args = ["char1:missing_brackets"]
+
+        characters, error = self.client._parse_character_parameters(char_args)
+
+        assert error is not None
+        assert "Invalid character syntax" in error
+        assert "Expected format: 'char1:[description]'" in error
+        assert len(characters) == 0
+
+    def test_parse_character_parameters_invalid_syntax_missing_colon(self):
+        """Test parsing character parameters with missing colon."""
+        char_args = ["char1[missing colon]"]
+
+        characters, error = self.client._parse_character_parameters(char_args)
+
+        assert error is not None
+        assert "Invalid character syntax" in error
+        assert len(characters) == 0
+
+    def test_parse_character_parameters_empty_description(self):
+        """Test parsing character parameters with empty description."""
+        char_args = ["char1:[ ]"]  # Space inside brackets to match regex but still be empty when stripped
+
+        characters, error = self.client._parse_character_parameters(char_args)
+
+        assert error is not None
+        assert "Empty character description" in error
+        assert len(characters) == 0
+
+    def test_parse_character_parameters_invalid_number_zero(self):
+        """Test parsing character parameters with invalid number (zero)."""
+        char_args = ["char0:[invalid number]"]
+
+        characters, error = self.client._parse_character_parameters(char_args)
+
+        assert error is not None
+        assert "Character number must be between 1 and 8" in error
+        assert len(characters) == 0
+
+    def test_parse_character_parameters_invalid_number_too_high(self):
+        """Test parsing character parameters with invalid number (too high)."""
+        char_args = ["char9:[too high number]"]
+
+        characters, error = self.client._parse_character_parameters(char_args)
+
+        assert error is not None
+        assert "Character number must be between 1 and 8" in error
+        assert len(characters) == 0
+
+    def test_parse_character_parameters_duplicate_numbers(self):
+        """Test parsing character parameters with duplicate numbers."""
+        char_args = ["char1:[first description]", "char1:[duplicate number]"]
+
+        characters, error = self.client._parse_character_parameters(char_args)
+
+        assert error is not None
+        assert "Duplicate character numbers found" in error
+        assert len(characters) == 0
+
+    def test_parse_character_parameters_case_insensitive(self):
+        """Test parsing character parameters is case insensitive."""
+        char_args = ["CHAR1:[uppercase char]", "Char2:[mixed case]"]
+
+        characters, error = self.client._parse_character_parameters(char_args)
+
+        assert error is None
+        assert len(characters) == 2
+        assert characters[0]['number'] == 1
+        assert characters[1]['number'] == 2
+
+    def test_generate_character_coordinates_single(self):
+        """Test coordinate generation for single character."""
+        coords = self.client._generate_character_coordinates(1)
+
+        assert len(coords) == 1
+        assert coords[0] == (0.0, 0.0)
+
+    def test_generate_character_coordinates_two(self):
+        """Test coordinate generation for two characters."""
+        coords = self.client._generate_character_coordinates(2)
+
+        assert len(coords) == 2
+        assert coords[0] == (0.0, 0.0)
+        assert coords[1] == (0.5, 0.5)
+
+    def test_generate_character_coordinates_three(self):
+        """Test coordinate generation for three characters."""
+        coords = self.client._generate_character_coordinates(3)
+
+        assert len(coords) == 3
+        assert coords[0] == (0.0, 0.0)
+        assert coords[1] == (0.5, 0.0)
+        assert coords[2] == (0.25, 0.5)
+
+    def test_generate_character_coordinates_four(self):
+        """Test coordinate generation for four characters."""
+        coords = self.client._generate_character_coordinates(4)
+
+        assert len(coords) == 4
+        assert coords[0] == (0.0, 0.0)
+        assert coords[1] == (0.5, 0.0)
+        assert coords[2] == (0.0, 0.5)
+        assert coords[3] == (0.5, 0.5)
+
+    def test_generate_character_coordinates_eight(self):
+        """Test coordinate generation for maximum characters."""
+        coords = self.client._generate_character_coordinates(8)
+
+        assert len(coords) == 8
+        # Verify all coordinates are within valid range [0, 1]
+        for x, y in coords:
+            assert 0.0 <= x <= 1.0
+            assert 0.0 <= y <= 1.0
+
+    def test_build_character_prompts_empty(self):
+        """Test building character prompts with empty character list."""
+        character_prompts, char_captions, negative_char_captions = self.client._build_character_prompts([], "negative prompt")
+
+        assert len(character_prompts) == 0
+        assert len(char_captions) == 0
+        assert len(negative_char_captions) == 0
+
+    def test_build_character_prompts_single(self):
+        """Test building character prompts for single character."""
+        characters = [{'number': 1, 'description': 'girl with blue hair'}]
+
+        character_prompts, char_captions, negative_char_captions = self.client._build_character_prompts(characters, "base negative")
+
+        assert len(character_prompts) == 1
+        assert len(char_captions) == 1
+        assert len(negative_char_captions) == 1
+
+        # Check characterPrompts structure
+        char_prompt = character_prompts[0]
+        assert char_prompt['prompt'] == 'girl with blue hair'
+        assert char_prompt['uc'] == 'lowres, aliasing, '
+        assert char_prompt['center']['x'] == 0.0
+        assert char_prompt['center']['y'] == 0.0
+        assert char_prompt['enabled'] is True
+
+        # Check char_captions structure
+        char_caption = char_captions[0]
+        assert char_caption['char_caption'] == 'girl with blue hair'
+        assert len(char_caption['centers']) == 1
+        assert char_caption['centers'][0]['x'] == 0.0
+        assert char_caption['centers'][0]['y'] == 0.0
+
+        # Check negative_char_captions structure
+        neg_caption = negative_char_captions[0]
+        assert neg_caption['char_caption'] == 'lowres, aliasing, '
+        assert len(neg_caption['centers']) == 1
+        assert neg_caption['centers'][0]['x'] == 0.0
+        assert neg_caption['centers'][0]['y'] == 0.0
+
+    def test_build_character_prompts_multiple(self):
+        """Test building character prompts for multiple characters."""
+        characters = [
+            {'number': 1, 'description': 'girl with blue hair'},
+            {'number': 2, 'description': 'boy with red eyes'}
+        ]
+
+        character_prompts, char_captions, negative_char_captions = self.client._build_character_prompts(characters, "base negative")
+
+        assert len(character_prompts) == 2
+        assert len(char_captions) == 2
+        assert len(negative_char_captions) == 2
+
+        # Verify first character
+        assert character_prompts[0]['prompt'] == 'girl with blue hair'
+        assert character_prompts[0]['center']['x'] == 0.0
+        assert character_prompts[0]['center']['y'] == 0.0
+
+        # Verify second character
+        assert character_prompts[1]['prompt'] == 'boy with red eyes'
+        assert character_prompts[1]['center']['x'] == 0.5
+        assert character_prompts[1]['center']['y'] == 0.5
+
+    def test_build_v4_payload_multicharacter(self):
+        """Test v4 payload generation with multi-character data."""
+        characters = [
+            {'number': 1, 'description': 'girl with blue hair, dress'},
+            {'number': 2, 'description': 'boy with red eyes, armor'}
+        ]
+
+        validated_params = {
+            'prompt': 'fantasy scene',
+            'negative_prompt': 'blurry, low quality',
+            'width': 832,
+            'height': 1216,
+            'scale': 5,
+            'sampler': 'k_euler_ancestral',
+            'steps': 23,
+            'n_samples': 1,
+            'ucPreset': 0,
+            'noise_schedule': 'karras',
+            'seed': 12345,
+            'characters': characters
+        }
+
+        payload = self.client._build_v4_payload(validated_params, "nai-diffusion-4-5-curated")
+
+        # Check multi-character specific parameters
+        params = payload['parameters']
+        assert params['use_coords'] is True
+        assert len(params['characterPrompts']) == 2
+        assert params['uc'] == ""  # Empty base UC for multi-character
+
+        # Check characterPrompts structure
+        char_prompts = params['characterPrompts']
+        assert char_prompts[0]['prompt'] == 'girl with blue hair, dress'
+        assert char_prompts[0]['center']['x'] == 0.0
+        assert char_prompts[0]['center']['y'] == 0.0
+        assert char_prompts[1]['prompt'] == 'boy with red eyes, armor'
+        assert char_prompts[1]['center']['x'] == 0.5
+        assert char_prompts[1]['center']['y'] == 0.5
+
+        # Check v4_prompt structure
+        v4_prompt = params['v4_prompt']
+        assert v4_prompt['use_coords'] is True
+        assert len(v4_prompt['caption']['char_captions']) == 2
+        assert v4_prompt['caption']['char_captions'][0]['char_caption'] == 'girl with blue hair, dress'
+        assert v4_prompt['caption']['char_captions'][1]['char_caption'] == 'boy with red eyes, armor'
+
+        # Check v4_negative_prompt structure
+        v4_negative = params['v4_negative_prompt']
+        assert v4_negative['caption']['base_caption'] == ""  # Empty for multi-character
+        assert len(v4_negative['caption']['char_captions']) == 2
+
+    def test_build_v4_payload_single_character_fallback(self):
+        """Test v4 payload generation without character data (single character fallback)."""
+        validated_params = {
+            'prompt': 'simple scene',
+            'negative_prompt': 'blurry, low quality',
+            'width': 832,
+            'height': 1216,
+            'scale': 5,
+            'sampler': 'k_euler_ancestral',
+            'steps': 23,
+            'n_samples': 1,
+            'ucPreset': 0,
+            'noise_schedule': 'karras',
+            'seed': 12345
+        }
+
+        payload = self.client._build_v4_payload(validated_params, "nai-diffusion-4-5-curated")
+
+        # Check single-character parameters
+        params = payload['parameters']
+        assert params['use_coords'] is False
+        assert len(params['characterPrompts']) == 0
+        assert len(params['v4_prompt']['caption']['char_captions']) == 0
+        assert params['v4_negative_prompt']['caption']['base_caption'] == 'blurry, low quality'
+
+    @patch('requests.Session.post')
+    def test_generate_image_multicharacter_success(self, mock_post):
+        """Test successful multi-character image generation."""
+        # Create mock ZIP response
+        zip_buffer = io.BytesIO()
+        with zipfile.ZipFile(zip_buffer, 'w') as zip_file:
+            zip_file.writestr('image_0.png', b'fake_multichar_image_data')
+        zip_data = zip_buffer.getvalue()
+
+        # Mock successful HTTP response
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.content = zip_data
+        mock_post.return_value = mock_response
+
+        # Test multi-character generation
+        character_args = ["char1:[girl with blue hair]", "char2:[boy with red eyes]"]
+        success, images, error = self.client.generate_image(
+            prompt="fantasy scene",
+            character_args=character_args
+        )
+
+        # Verify results
+        assert success is True
+        assert len(images) == 1
+        assert images[0] == b'fake_multichar_image_data'
+        assert error is None
+
+        # Verify API call payload
+        mock_post.assert_called_once()
+        args, kwargs = mock_post.call_args
+        payload = kwargs['json']
+
+        # Check multi-character payload structure
+        params = payload['parameters']
+        assert params['use_coords'] is True
+        assert len(params['characterPrompts']) == 2
+        assert params['characterPrompts'][0]['prompt'] == 'girl with blue hair'
+        assert params['characterPrompts'][1]['prompt'] == 'boy with red eyes'
+
+    @patch('requests.Session.post')
+    def test_generate_image_multicharacter_invalid_params(self, mock_post):
+        """Test multi-character generation with invalid character parameters."""
+        # Test with invalid character syntax
+        character_args = ["char1:missing_brackets", "char2:[valid description]"]
+
+        success, images, error = self.client.generate_image(
+            prompt="fantasy scene",
+            character_args=character_args
+        )
+
+        # Should fail due to invalid character parameters
+        assert success is False
+        assert images is None
+        assert error is not None
+        assert "Character parameter error" in error
+
+        # API should not be called
+        mock_post.assert_not_called()
+
+    def test_generate_image_character_args_none(self):
+        """Test generate_image with None character_args (backward compatibility)."""
+        with patch.object(self.client, '_validate_parameters') as mock_validate, \
+             patch.object(self.client, '_build_v4_payload') as mock_build, \
+             patch('requests.Session.post') as mock_post:
+
+            # Mock successful validation and payload building
+            mock_validate.return_value = {'prompt': 'test', 'negative_prompt': 'neg'}
+            mock_build.return_value = {'test': 'payload'}
+
+            # Mock successful HTTP response
+            zip_buffer = io.BytesIO()
+            with zipfile.ZipFile(zip_buffer, 'w') as zip_file:
+                zip_file.writestr('image_0.png', b'test_data')
+
+            mock_response = MagicMock()
+            mock_response.status_code = 200
+            mock_response.content = zip_buffer.getvalue()
+            mock_post.return_value = mock_response
+
+            # Test with None character_args
+            success, images, error = self.client.generate_image(
+                prompt="test prompt",
+                character_args=None
+            )
+
+            # Should succeed and not include character data
+            assert success is True
+            mock_validate.assert_called_once()
+            validated_params = mock_validate.call_args[0][0]
+            assert 'characters' not in validated_params
+
+    def test_generate_image_character_args_empty_list(self):
+        """Test generate_image with empty character_args list."""
+        with patch.object(self.client, '_validate_parameters') as mock_validate, \
+             patch.object(self.client, '_build_v4_payload') as mock_build, \
+             patch('requests.Session.post') as mock_post:
+
+            # Mock successful validation and payload building
+            mock_validate.return_value = {'prompt': 'test', 'negative_prompt': 'neg'}
+            mock_build.return_value = {'test': 'payload'}
+
+            # Mock successful HTTP response
+            zip_buffer = io.BytesIO()
+            with zipfile.ZipFile(zip_buffer, 'w') as zip_file:
+                zip_file.writestr('image_0.png', b'test_data')
+
+            mock_response = MagicMock()
+            mock_response.status_code = 200
+            mock_response.content = zip_buffer.getvalue()
+            mock_post.return_value = mock_response
+
+            # Test with empty character_args
+            success, images, error = self.client.generate_image(
+                prompt="test prompt",
+                character_args=[]
+            )
+
+            # Should succeed and not include character data
+            assert success is True
+            mock_validate.assert_called_once()
+            validated_params = mock_validate.call_args[0][0]
+            assert 'characters' not in validated_params

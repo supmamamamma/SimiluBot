@@ -280,3 +280,168 @@ class TestImageGenerator:
         assert success is False
         assert results is None
         assert error == "Upload failed"
+
+    # Multi-character functionality tests
+    @patch('similubot.generators.novelai_client.NovelAIClient.generate_image')
+    @patch('PIL.Image.open')
+    @pytest.mark.asyncio
+    async def test_generate_image_with_progress_multicharacter_success(self, mock_image_open, mock_generate):
+        """Test successful multi-character image generation with progress."""
+        # Mock image format detection
+        mock_img = MagicMock()
+        mock_img.format = 'PNG'
+        mock_image_open.return_value.__enter__.return_value = mock_img
+
+        # Mock successful generation
+        fake_image_data = b'fake_multichar_png_data'
+        mock_generate.return_value = (True, [fake_image_data], None)
+
+        # Mock progress callback
+        progress_callback = MagicMock()
+
+        # Test multi-character generation
+        character_args = ["char1:[girl with blue hair]", "char2:[boy with red eyes]"]
+        success, file_paths, error = await self.generator.generate_image_with_progress(
+            prompt="fantasy scene",
+            progress_callback=progress_callback,
+            character_args=character_args
+        )
+
+        # Verify results
+        assert success is True
+        assert file_paths is not None
+        assert len(file_paths) == 1
+        assert file_paths[0].endswith('.png')
+        assert os.path.exists(file_paths[0])
+        assert error is None
+
+        # Verify file content
+        with open(file_paths[0], 'rb') as f:
+            assert f.read() == fake_image_data
+
+        # Verify API call with character arguments
+        mock_generate.assert_called_once()
+        args, kwargs = mock_generate.call_args
+        assert args[0] == "fantasy scene"  # prompt
+        assert args[1] is None  # negative_prompt
+        assert args[2] == "nai-diffusion-3"  # model
+        assert args[3] == character_args  # character_args
+
+        # Verify progress callback was called
+        assert progress_callback.called
+
+    @patch('similubot.generators.novelai_client.NovelAIClient.generate_image')
+    @pytest.mark.asyncio
+    async def test_generate_image_with_progress_multicharacter_invalid_params(self, mock_generate):
+        """Test multi-character generation with invalid character parameters."""
+        # Mock API failure due to invalid character parameters
+        mock_generate.return_value = (False, None, "Character parameter error: Invalid character syntax")
+
+        character_args = ["char1:missing_brackets", "char2:[valid description]"]
+        success, file_paths, error = await self.generator.generate_image_with_progress(
+            prompt="fantasy scene",
+            character_args=character_args
+        )
+
+        assert success is False
+        assert file_paths is None
+        assert error == "Character parameter error: Invalid character syntax"
+
+    @patch('similubot.generators.novelai_client.NovelAIClient.generate_image')
+    @patch('PIL.Image.open')
+    @pytest.mark.asyncio
+    async def test_generate_image_with_progress_character_args_none(self, mock_image_open, mock_generate):
+        """Test generation with None character_args (backward compatibility)."""
+        # Mock image format detection
+        mock_img = MagicMock()
+        mock_img.format = 'PNG'
+        mock_image_open.return_value.__enter__.return_value = mock_img
+
+        # Mock successful generation
+        fake_image_data = b'fake_single_char_data'
+        mock_generate.return_value = (True, [fake_image_data], None)
+
+        success, file_paths, error = await self.generator.generate_image_with_progress(
+            prompt="simple scene",
+            character_args=None
+        )
+
+        # Verify results
+        assert success is True
+        assert file_paths is not None
+        assert len(file_paths) == 1
+        assert error is None
+
+        # Verify API call with None character_args
+        mock_generate.assert_called_once()
+        args, kwargs = mock_generate.call_args
+        assert args[3] is None  # character_args should be None
+
+    @patch('similubot.generators.novelai_client.NovelAIClient.generate_image')
+    @patch('PIL.Image.open')
+    @pytest.mark.asyncio
+    async def test_generate_image_with_progress_character_args_empty(self, mock_image_open, mock_generate):
+        """Test generation with empty character_args list."""
+        # Mock image format detection
+        mock_img = MagicMock()
+        mock_img.format = 'PNG'
+        mock_image_open.return_value.__enter__.return_value = mock_img
+
+        # Mock successful generation
+        fake_image_data = b'fake_single_char_data'
+        mock_generate.return_value = (True, [fake_image_data], None)
+
+        success, file_paths, error = await self.generator.generate_image_with_progress(
+            prompt="simple scene",
+            character_args=[]
+        )
+
+        # Verify results
+        assert success is True
+        assert file_paths is not None
+        assert len(file_paths) == 1
+        assert error is None
+
+        # Verify API call with empty character_args
+        mock_generate.assert_called_once()
+        args, kwargs = mock_generate.call_args
+        assert args[3] == []  # character_args should be empty list
+
+    @patch('similubot.generators.novelai_client.NovelAIClient.generate_image')
+    @patch('PIL.Image.open')
+    @pytest.mark.asyncio
+    async def test_generate_and_upload_multicharacter_success(self, mock_image_open, mock_generate):
+        """Test successful multi-character generation and upload."""
+        # Mock image format detection
+        mock_img = MagicMock()
+        mock_img.format = 'PNG'
+        mock_image_open.return_value.__enter__.return_value = mock_img
+
+        # Mock successful generation
+        fake_image_data = b'fake_multichar_png_data'
+        mock_generate.return_value = (True, [fake_image_data], None)
+
+        # Mock uploader
+        mock_uploader = MagicMock()
+        mock_uploader.upload_with_progress = MagicMock(return_value=(True, "http://example.com/multichar.png", None))
+
+        character_args = ["char1:[girl with blue hair]", "char2:[boy with red eyes]"]
+        success, results, error = await self.generator.generate_and_upload(
+            prompt="fantasy scene",
+            uploader=mock_uploader,
+            character_args=character_args
+        )
+
+        assert success is True
+        assert results is not None
+        assert len(results) == 1
+        assert results[0] == "http://example.com/multichar.png"
+        assert error is None
+
+        # Verify uploader was called
+        mock_uploader.upload_with_progress.assert_called_once()
+
+        # Verify generation was called with character args
+        mock_generate.assert_called_once()
+        args, kwargs = mock_generate.call_args
+        assert args[3] == character_args  # character_args passed through

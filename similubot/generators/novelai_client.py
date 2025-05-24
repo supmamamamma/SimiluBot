@@ -4,6 +4,7 @@ import io
 import json
 import logging
 import random
+import re
 import string
 import zipfile
 from typing import Dict, Any, Optional, Tuple, List
@@ -150,6 +151,165 @@ class NovelAIClient:
         self.logger.debug(f"Validated parameters: {validated}")
         return validated
 
+    def _parse_character_parameters(self, character_args: List[str]) -> Tuple[List[Dict[str, Any]], Optional[str]]:
+        """
+        Parse character parameters from command arguments.
+
+        Args:
+            character_args: List of character argument strings (e.g., ["char1:[description]", "char2:[description]"])
+
+        Returns:
+            Tuple containing:
+                - List of character dictionaries with parsed data
+                - Error message if parsing failed, None otherwise
+        """
+        characters = []
+        char_pattern = re.compile(r'^char(\d+):\[(.+)\]$', re.IGNORECASE)
+
+        self.logger.debug(f"Parsing character parameters: {character_args}")
+
+        for arg in character_args:
+            match = char_pattern.match(arg.strip())
+            if not match:
+                error_msg = f"Invalid character syntax: '{arg}'. Expected format: 'char1:[description]'"
+                self.logger.error(error_msg)
+                return [], error_msg
+
+            char_num = int(match.group(1))
+            char_desc = match.group(2).strip()
+
+            if not char_desc:
+                error_msg = f"Empty character description for char{char_num}"
+                self.logger.error(error_msg)
+                return [], error_msg
+
+            if char_num < 1 or char_num > 8:  # Reasonable limit for multi-character generation
+                error_msg = f"Character number must be between 1 and 8, got: {char_num}"
+                self.logger.error(error_msg)
+                return [], error_msg
+
+            characters.append({
+                'number': char_num,
+                'description': char_desc
+            })
+
+        # Sort by character number and check for duplicates
+        characters.sort(key=lambda x: x['number'])
+        char_numbers = [char['number'] for char in characters]
+        if len(char_numbers) != len(set(char_numbers)):
+            error_msg = "Duplicate character numbers found"
+            self.logger.error(error_msg)
+            return [], error_msg
+
+        self.logger.info(f"Successfully parsed {len(characters)} character(s)")
+        return characters, None
+
+    def _generate_character_coordinates(self, num_characters: int) -> List[Tuple[float, float]]:
+        """
+        Generate reasonable coordinate positions for multiple characters.
+
+        Args:
+            num_characters: Number of characters to position
+
+        Returns:
+            List of (x, y) coordinate tuples
+        """
+        if num_characters == 1:
+            return [(0.0, 0.0)]
+        elif num_characters == 2:
+            return [(0.0, 0.0), (0.5, 0.5)]
+        elif num_characters == 3:
+            return [(0.0, 0.0), (0.5, 0.0), (0.25, 0.5)]
+        elif num_characters == 4:
+            return [(0.0, 0.0), (0.5, 0.0), (0.0, 0.5), (0.5, 0.5)]
+        elif num_characters <= 6:
+            # Two rows of characters
+            coords = []
+            chars_per_row = (num_characters + 1) // 2
+            for i in range(num_characters):
+                row = i // chars_per_row
+                col = i % chars_per_row
+                x = col / max(1, chars_per_row - 1) if chars_per_row > 1 else 0.0
+                y = row * 0.5
+                coords.append((x, y))
+            return coords
+        else:
+            # Three rows for 7-8 characters
+            coords = []
+            chars_per_row = (num_characters + 2) // 3
+            for i in range(num_characters):
+                row = i // chars_per_row
+                col = i % chars_per_row
+                x = col / max(1, chars_per_row - 1) if chars_per_row > 1 else 0.0
+                y = row * 0.33
+                coords.append((x, y))
+            return coords
+
+    def _build_character_prompts(self, characters: List[Dict[str, Any]], negative_prompt: str) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]], List[Dict[str, Any]]]:
+        """
+        Build character prompt structures for NovelAI API.
+
+        Args:
+            characters: List of character dictionaries with parsed data
+            negative_prompt: Base negative prompt
+
+        Returns:
+            Tuple containing:
+                - characterPrompts array for API
+                - char_captions array for v4_prompt
+                - negative_char_captions array for v4_negative_prompt
+        """
+        if not characters:
+            return [], [], []
+
+        coordinates = self._generate_character_coordinates(len(characters))
+        character_prompts = []
+        char_captions = []
+        negative_char_captions = []
+
+        self.logger.debug(f"Building character prompts for {len(characters)} characters")
+
+        for i, char in enumerate(characters):
+            x, y = coordinates[i]
+            description = char['description']
+
+            # Build characterPrompts entry
+            character_prompts.append({
+                "prompt": description,
+                "uc": "lowres, aliasing, ",  # Default negative prompt for characters
+                "center": {
+                    "x": x,
+                    "y": y
+                },
+                "enabled": True
+            })
+
+            # Build char_captions entry for v4_prompt
+            char_captions.append({
+                "char_caption": description,
+                "centers": [
+                    {
+                        "x": x,
+                        "y": y
+                    }
+                ]
+            })
+
+            # Build negative_char_captions entry for v4_negative_prompt
+            negative_char_captions.append({
+                "char_caption": "lowres, aliasing, ",
+                "centers": [
+                    {
+                        "x": x,
+                        "y": y
+                    }
+                ]
+            })
+
+            self.logger.debug(f"Character {char['number']}: '{description[:50]}...' at ({x:.2f}, {y:.2f})")
+
+        return character_prompts, char_captions, negative_char_captions
+
     def _build_v4_payload(self, validated_params: Dict[str, Any], model: str) -> Dict[str, Any]:
         """
         Build the v4 format payload for NovelAI API.
@@ -163,6 +323,22 @@ class NovelAIClient:
         """
         prompt = validated_params['prompt']
         negative_prompt = validated_params['negative_prompt']
+
+        # Handle multi-character generation
+        character_prompts = []
+        char_captions = []
+        negative_char_captions = []
+        use_coords = False
+
+        if 'characters' in validated_params and validated_params['characters']:
+            self.logger.info(f"Building multi-character payload with {len(validated_params['characters'])} characters")
+            character_prompts, char_captions, negative_char_captions = self._build_character_prompts(
+                validated_params['characters'],
+                negative_prompt
+            )
+            use_coords = True  # Enable coordinates for multi-character generation
+        else:
+            self.logger.debug("Building single-character payload")
 
         # Build the v4 payload structure
         payload = {
@@ -188,31 +364,37 @@ class NovelAIClient:
                 "noise_schedule": validated_params['noise_schedule'],
                 "legacy_v3_extend": validated_params.get('legacy_v3_extend', False),
                 "skip_cfg_above_sigma": validated_params.get('skip_cfg_above_sigma', None),
-                "use_coords": validated_params.get('use_coords', False),
+                "use_coords": use_coords,
                 "legacy_uc": validated_params.get('legacy_uc', False),
                 "normalize_reference_strength_multiple": validated_params.get('normalize_reference_strength_multiple', True),
                 "seed": validated_params['seed'],
-                "characterPrompts": validated_params.get('characterPrompts', []),
+                "characterPrompts": character_prompts,
+                "uc": "",  # Empty base UC for multi-character
                 "v4_prompt": {
                     "caption": {
                         "base_caption": prompt,
-                        "char_captions": validated_params.get('char_captions', [])
+                        "char_captions": char_captions
                     },
-                    "use_coords": validated_params.get('use_coords', False),
+                    "use_coords": use_coords,
                     "use_order": validated_params.get('use_order', True)
                 },
                 "v4_negative_prompt": {
                     "caption": {
-                        "base_caption": negative_prompt,
-                        "char_captions": validated_params.get('negative_char_captions', [])
+                        "base_caption": "" if character_prompts else negative_prompt,  # Empty base for multi-character
+                        "char_captions": negative_char_captions
                     },
                     "legacy_uc": validated_params.get('legacy_uc', False)
                 },
-                "negative_prompt": negative_prompt,
                 "deliberate_euler_ancestral_bug": validated_params.get('deliberate_euler_ancestral_bug', False),
                 "prefer_brownian": validated_params.get('prefer_brownian', True)
             }
         }
+
+        # Log payload structure for debugging
+        if character_prompts:
+            self.logger.debug(f"Multi-character payload: {len(character_prompts)} characters, use_coords={use_coords}")
+        else:
+            self.logger.debug("Single-character payload generated")
 
         return payload
 
@@ -221,6 +403,7 @@ class NovelAIClient:
         prompt: str,
         negative_prompt: Optional[str] = None,
         model: str = "nai-diffusion-4-5-curated",
+        character_args: Optional[List[str]] = None,
         **parameters
     ) -> Tuple[bool, Optional[List[bytes]], Optional[str]]:
         """
@@ -230,6 +413,7 @@ class NovelAIClient:
             prompt: Text prompt for image generation
             negative_prompt: Optional negative prompt
             model: Model to use for generation
+            character_args: Optional list of character argument strings (e.g., ["char1:[desc]", "char2:[desc]"])
             **parameters: Additional generation parameters
 
         Returns:
@@ -241,6 +425,15 @@ class NovelAIClient:
         try:
             self.logger.info(f"Generating image with prompt: '{prompt[:100]}...'")
 
+            # Parse character parameters if provided
+            characters = []
+            if character_args:
+                self.logger.debug(f"Processing {len(character_args)} character arguments")
+                characters, parse_error = self._parse_character_parameters(character_args)
+                if parse_error:
+                    self.logger.error(f"Character parsing failed: {parse_error}")
+                    return False, None, f"Character parameter error: {parse_error}"
+
             # Prepare parameters
             gen_params = {
                 'prompt': prompt.strip(),
@@ -249,6 +442,11 @@ class NovelAIClient:
 
             if negative_prompt:
                 gen_params['negative_prompt'] = negative_prompt.strip()
+
+            # Add character data to parameters
+            if characters:
+                gen_params['characters'] = characters
+                self.logger.info(f"Multi-character generation with {len(characters)} characters")
 
             # Validate parameters
             validated_params = self._validate_parameters(gen_params)

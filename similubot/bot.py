@@ -158,9 +158,10 @@ class SimiluBot:
             if self.image_generator:
                 nai_description = "Generate an AI image using NovelAI with the given text prompt."
                 nai_description += f"\nDefault upload: {self.config.get_novelai_upload_service()}"
-                nai_description += "\nAdd `discord` or `catbox` at the end to override."
+                nai_description += "\nAdd `discord` or `catbox` to override upload service."
+                nai_description += "\nAdd `char1:[description] char2:[description]` for multi-character generation."
                 embed.add_field(
-                    name=f"{self.bot.command_prefix}nai <prompt> [discord/catbox]",
+                    name=f"{self.bot.command_prefix}nai <prompt> [discord/catbox] [char1:[desc] char2:[desc]...]",
                     value=nai_description,
                     inline=False
                 )
@@ -194,9 +195,10 @@ class SimiluBot:
                 !nai <prompt>
                 !nai <prompt> discord
                 !nai <prompt> catbox
+                !nai <prompt> [discord/catbox] char1:[description] char2:[description]
 
             Args:
-                args: Prompt text followed by optional upload service (discord/catbox)
+                args: Prompt text followed by optional upload service and character parameters
             """
             if not self.image_generator:
                 await ctx.reply("❌ NovelAI image generation is not configured. Please check your API key in the config.")
@@ -206,22 +208,46 @@ class SimiluBot:
                 await ctx.reply("❌ Please provide a prompt for image generation.")
                 return
 
-            # Parse arguments for upload service override
-            # Check if the last word is a valid upload service
-            parts = args.strip().split()
-            upload_service = None
+            # Parse arguments for upload service and character parameters
+            # Use regex to properly extract character parameters with spaces
+            import re
 
-            if len(parts) >= 2 and parts[-1].lower() in ["discord", "catbox"]:
-                upload_service = parts[-1].lower()
-                prompt = " ".join(parts[:-1]).strip()
-            else:
-                prompt = args.strip()
+            upload_service = None
+            character_args = []
+            remaining_text = args.strip()
+
+            # Extract upload service (discord/catbox) - must be a standalone word
+            upload_match = re.search(r'\b(discord|catbox)\b', remaining_text, re.IGNORECASE)
+            if upload_match:
+                upload_service = upload_match.group(1).lower()
+                remaining_text = remaining_text.replace(upload_match.group(0), '', 1).strip()
+
+            # Extract character parameters using regex
+            char_pattern = re.compile(r'char(\d+):\[([^\]]+)\]', re.IGNORECASE)
+            char_matches = char_pattern.findall(remaining_text)
+
+            for char_num, char_desc in char_matches:
+                character_args.append(f"char{char_num}:[{char_desc}]")
+
+            # Remove character parameters from the text to get the prompt
+            prompt = char_pattern.sub('', remaining_text).strip()
+            # Clean up extra spaces
+            prompt = re.sub(r'\s+', ' ', prompt).strip()
 
             if not prompt:
                 await ctx.reply("❌ Please provide a prompt for image generation.")
                 return
 
-            await self._process_nai_generation(ctx.message, prompt, upload_service)
+            # Validate character parameters if provided
+            if character_args:
+                self.logger.info(f"Multi-character generation requested with {len(character_args)} characters")
+                # Basic validation - detailed validation will happen in the client
+                for char_arg in character_args:
+                    if not char_arg.lower().startswith("char") or ":[" not in char_arg or not char_arg.endswith("]"):
+                        await ctx.reply(f"❌ Invalid character syntax: '{char_arg}'. Expected format: 'char1:[description]'")
+                        return
+
+            await self._process_nai_generation(ctx.message, prompt, upload_service, character_args)
 
     async def _process_mega_link(
         self,
@@ -346,7 +372,8 @@ class SimiluBot:
         self,
         message: discord.Message,
         prompt: str,
-        upload_service_override: Optional[str] = None
+        upload_service_override: Optional[str] = None,
+        character_args: Optional[List[str]] = None
     ):
         """
         Process a NovelAI image generation request with real-time progress tracking.
@@ -354,11 +381,15 @@ class SimiluBot:
         Args:
             message: Discord message containing the request
             prompt: Text prompt for image generation
+            upload_service_override: Optional upload service override
+            character_args: Optional list of character argument strings
         """
         # Create initial progress embed
+        generation_type = "Multi-character" if character_args else "Single-character"
+        char_info = f" ({len(character_args)} characters)" if character_args else ""
         embed = discord.Embed(
             title="🎨 AI Image Generation",
-            description=f"Generating image from prompt: `{prompt[:100]}{'...' if len(prompt) > 100 else ''}`",
+            description=f"{generation_type} generation{char_info}\nPrompt: `{prompt[:100]}{'...' if len(prompt) > 100 else ''}`",
             color=0x9b59b6
         )
         response = await message.reply(embed=embed)
@@ -375,13 +406,17 @@ class SimiluBot:
             default_params = self.config.get_novelai_default_parameters()
             model = self.config.get_novelai_default_model()
 
-            self.logger.info(f"Starting NovelAI image generation: '{prompt[:100]}...'")
+            if character_args:
+                self.logger.info(f"Starting NovelAI multi-character generation: '{prompt[:100]}...' with {len(character_args)} characters")
+            else:
+                self.logger.info(f"Starting NovelAI single-character generation: '{prompt[:100]}...'")
 
             # Generate image with progress
             success, file_paths, error = await self.image_generator.generate_image_with_progress(
                 prompt=prompt,
                 model=model,
                 progress_callback=progress_callback,
+                character_args=character_args,
                 **default_params
             )
 
