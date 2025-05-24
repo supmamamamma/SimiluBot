@@ -3,7 +3,7 @@ import asyncio
 import logging
 import os
 import re
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Union
 
 import discord
 from discord.ext import commands
@@ -12,6 +12,7 @@ from similubot.downloaders.mega_downloader import MegaDownloader
 from similubot.converters.audio_converter import AudioConverter
 from similubot.uploaders.catbox_uploader import CatboxUploader
 from similubot.uploaders.discord_uploader import DiscordUploader
+from similubot.generators.image_generator import ImageGenerator
 from similubot.utils.config_manager import ConfigManager
 from similubot.progress.discord_updater import DiscordProgressUpdater
 
@@ -74,6 +75,19 @@ class SimiluBot:
             user_hash=self.config.get_catbox_user_hash()
         )
         self.discord_uploader = DiscordUploader()
+
+        # Initialize image generator (if NovelAI is configured)
+        try:
+            self.image_generator = ImageGenerator(
+                api_key=self.config.get_novelai_api_key(),
+                base_url=self.config.get_novelai_base_url(),
+                timeout=self.config.get_novelai_timeout(),
+                temp_dir=temp_dir
+            )
+            self.logger.info("NovelAI image generator initialized successfully")
+        except ValueError as e:
+            self.logger.warning(f"NovelAI not configured: {e}")
+            self.image_generator = None
 
     def _setup_event_handlers(self):
         """Set up Discord event handlers."""
@@ -140,6 +154,14 @@ class SimiluBot:
                 inline=False
             )
 
+            # Add NovelAI command if available
+            if self.image_generator:
+                embed.add_field(
+                    name=f"{self.bot.command_prefix}nai <prompt>",
+                    value="Generate an AI image using NovelAI with the given text prompt.",
+                    inline=False
+                )
+
             embed.add_field(
                 name="Automatic MEGA Link Detection",
                 value="The bot will automatically detect and process MEGA links in messages.",
@@ -159,6 +181,24 @@ class SimiluBot:
             )
 
             await ctx.send(embed=embed)
+
+        @self.bot.command(name="nai")
+        async def nai_command(ctx, *, prompt: str):
+            """
+            Generate an image using NovelAI.
+
+            Args:
+                prompt: Text prompt for image generation
+            """
+            if not self.image_generator:
+                await ctx.reply("❌ NovelAI image generation is not configured. Please check your API key in the config.")
+                return
+
+            if not prompt.strip():
+                await ctx.reply("❌ Please provide a prompt for image generation.")
+                return
+
+            await self._process_nai_generation(ctx.message, prompt.strip())
 
     async def _process_mega_link(
         self,
@@ -279,6 +319,125 @@ class SimiluBot:
             # Clean up temporary files
             self._cleanup_temp_files([file_path, converted_file])
 
+    async def _process_nai_generation(
+        self,
+        message: discord.Message,
+        prompt: str
+    ):
+        """
+        Process a NovelAI image generation request with real-time progress tracking.
+
+        Args:
+            message: Discord message containing the request
+            prompt: Text prompt for image generation
+        """
+        # Create initial progress embed
+        embed = discord.Embed(
+            title="🎨 AI Image Generation",
+            description=f"Generating image from prompt: `{prompt[:100]}{'...' if len(prompt) > 100 else ''}`",
+            color=0x9b59b6
+        )
+        response = await message.reply(embed=embed)
+
+        # Create Discord progress updater
+        discord_updater = DiscordProgressUpdater(response, update_interval=3.0)
+        progress_callback = discord_updater.create_callback()
+
+        # Initialize variables for cleanup
+        file_paths: Optional[List[str]] = None
+
+        try:
+            # Get default parameters from config
+            default_params = self.config.get_novelai_default_parameters()
+            model = self.config.get_novelai_default_model()
+
+            self.logger.info(f"Starting NovelAI image generation: '{prompt[:100]}...'")
+
+            # Generate image with progress
+            success, file_paths, error = await self.image_generator.generate_image_with_progress(
+                prompt=prompt,
+                model=model,
+                progress_callback=progress_callback,
+                **default_params
+            )
+
+            if not success or not file_paths:
+                await self._send_error_embed(response, "Generation Failed", error or "Unknown error")
+                return
+
+            # Upload images
+            upload_service = self.config.get_default_upload_service()
+            self.logger.info(f"Starting upload to {upload_service}: {len(file_paths)} image(s)")
+
+            if upload_service == "catbox":
+                # Upload to CatBox
+                upload_urls = []
+                for i, file_path in enumerate(file_paths):
+                    success, file_url, error = await asyncio.to_thread(
+                        self.catbox_uploader.upload_with_progress,
+                        file_path,
+                        progress_callback
+                    )
+
+                    if not success or not file_url:
+                        await self._send_error_embed(response, "Upload Failed", error or "Unknown error")
+                        return
+
+                    upload_urls.append(file_url)
+
+                # Create success embed
+                success_embed = discord.Embed(
+                    title="✅ Image Generation Complete",
+                    description="Your AI-generated image is ready!",
+                    color=0x2ecc71
+                )
+                success_embed.add_field(name="🎨 Prompt", value=f"`{prompt[:200]}{'...' if len(prompt) > 200 else ''}`", inline=False)
+                success_embed.add_field(name="🤖 Model", value=model, inline=True)
+                success_embed.add_field(name="📊 Images", value=str(len(upload_urls)), inline=True)
+
+                # Add download links
+                for i, url in enumerate(upload_urls):
+                    success_embed.add_field(
+                        name=f"🔗 Download Link {i+1}" if len(upload_urls) > 1 else "🔗 Download Link",
+                        value=url,
+                        inline=False
+                    )
+
+                success_embed.timestamp = discord.utils.utcnow()
+                await response.edit(embed=success_embed)
+
+            else:  # discord upload
+                # Upload directly to Discord
+                for i, file_path in enumerate(file_paths):
+                    content = f"✅ AI-generated image {i+1}/{len(file_paths)}" if len(file_paths) > 1 else "✅ AI-generated image"
+                    content += f"\n**Prompt:** `{prompt[:150]}{'...' if len(prompt) > 150 else ''}`"
+
+                    success, discord_msg, error = await self.discord_uploader.upload(
+                        file_path,
+                        message.channel,
+                        content=content
+                    )
+
+                    if not success:
+                        await self._send_error_embed(response, "Upload Failed", error or "Unknown error")
+                        return
+
+                # Delete the processing message since files are uploaded directly
+                await response.delete()
+
+        except Exception as e:
+            self.logger.error(f"Error processing NovelAI generation: {e}", exc_info=True)
+            await self._send_error_embed(
+                response,
+                "Generation Error",
+                f"An unexpected error occurred: {str(e)}"
+            )
+
+        finally:
+            # Clean up temporary files
+            if file_paths:
+                self._cleanup_temp_files(file_paths)
+
     async def _send_error_embed(self, message: discord.Message, title: str, description: str):
         """
         Send an error embed to Discord.
@@ -315,7 +474,7 @@ class SimiluBot:
         else:
             return f"{size_bytes} B"
 
-    def _cleanup_temp_files(self, file_paths: List[Optional[str]]):
+    def _cleanup_temp_files(self, file_paths: Union[List[str], List[Optional[str]]]):
         """
         Clean up temporary files.
 

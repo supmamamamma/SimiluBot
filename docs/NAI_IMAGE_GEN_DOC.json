@@ -1,0 +1,954 @@
+{
+    "schemes": [],
+    "swagger": "2.0",
+    "info": {
+        "description": "Hello, fellow API developer!\n\nCurrently, you have access to three APIs:\n\n- Primary NovelAI API: https://api.novelai.net/docs/\n- Image Generation API: https://image.novelai.net/docs/index.html\n- Text Generation API: https://text.novelai.net/docs/index.html\n\nWhen building applications that leverage the NovelAI API, you need to request a user's Persistent API token for integration and use it in the Authorization header.\nFor security reasons, storing user credentials in plaintext is strongly discouraged.\nThese credentials are essential, as they provide the encryption key for a user's stories, and improper handling can compromise user data.\n\nAll API users must adhere to the NovelAI Terms of Service: https://novelai.net/terms.\n\nNotice for Existing API Users:\n\nAs part of our ongoing efforts to enhance service stability, we have separated the primary API (used for logins, subscriptions, story saving, etc.) from the generation APIs.\nWhile the generation API is designed to be similar to api.novelai.net, a few backward-incompatible changes have been made:\n\n- repetition_penalty_whitelist is now strictly an array. Nested arrays are no longer allowed.\n- Improved context size validation (more detail in `input` field's documentation).\n- Improved `max_length` validation (more detail in `input` field's documentation).\n\nTo ensure that all users benefit from these stability improvements, we will be decommissioning Kayra for subscribed API users on api.novelai.net.\nStarting from September 30th, 2024, Kayra will only be available on text.novelai.net.\n\nOlder models, such as Clio, will remain available on the old API for now, with decommissioning planned at a later date.",
+        "title": "Omegalaser API",
+        "contact": {},
+        "version": "1.0"
+    },
+    "host": "",
+    "basePath": "/",
+    "paths": {
+        "/ai/augment-image": {
+            "post": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "description": "Augment image using NovelAI's diffusion models (Director Tools)",
+                "produces": [
+                    "application/zip"
+                ],
+                "summary": "Augment image",
+                "parameters": [
+                    {
+                        "description": "JSON request body",
+                        "name": "json",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/image.AugmentImageRequest"
+                        }
+                    },
+                    {
+                        "type": "string",
+                        "description": "The Correlation ID of the request. Useful to show to a user on a 500 error for reporting. Format: 6 alphanumerical upper or lowercase letters.",
+                        "name": "x-correlation-id",
+                        "in": "header"
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "A zip file containing the generated images.",
+                        "schema": {
+                            "type": "bytes"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/utils.JsonError"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/utils.JsonError"
+                        }
+                    }
+                }
+            }
+        },
+        "/ai/encode-vibe": {
+            "post": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "description": "Get a binary containing the vibes of a given image",
+                "produces": [
+                    "application/binary"
+                ],
+                "summary": "Encode vibes for vibe transfer",
+                "parameters": [
+                    {
+                        "description": "JSON request body",
+                        "name": "json",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/image.EncodeVibeRequest"
+                        }
+                    },
+                    {
+                        "type": "string",
+                        "description": "The Correlation ID of the request. Useful to show to a user on a 500 error for reporting. Format: 6 alphanumerical upper or lowercase letters.",
+                        "name": "x-correlation-id",
+                        "in": "header"
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "A binary file containing the vibes of the image",
+                        "schema": {
+                            "type": "bytes"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/utils.JsonError"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/utils.JsonError"
+                        }
+                    }
+                }
+            }
+        },
+        "/ai/generate": {
+            "post": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "description": "Generate text using NovelAI's large language models. According to our Terms of Service, all generation requests must be initiated by a human action. Automating text or image generation to create excessive load on our systems is not allowed.",
+                "produces": [
+                    "application/json"
+                ],
+                "summary": "Generate text",
+                "parameters": [
+                    {
+                        "description": "JSON request body",
+                        "name": "json",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/text.LMGenerateRequest"
+                        }
+                    },
+                    {
+                        "type": "string",
+                        "description": "The Correlation ID of the request. Useful to show to a user on a 500 error for reporting. Format: 6 alphanumerical upper or lowercase letters.",
+                        "name": "x-correlation-id",
+                        "in": "header"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Text generation reply",
+                        "schema": {
+                            "$ref": "#/definitions/text.LMGenerationResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/utils.JsonError"
+                        }
+                    },
+                    "429": {
+                        "description": "Rate limited. API clients should not attempt to retry.",
+                        "schema": {
+                            "$ref": "#/definitions/utils.JsonError"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/utils.JsonError"
+                        }
+                    }
+                }
+            }
+        },
+        "/ai/generate-image": {
+            "post": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "description": "Generate images using NovelAI's diffusion models. According to our Terms of Service, all generation requests must be initiated by a human action. Automating text or image generation to create excessive load on our systems is not allowed.",
+                "produces": [
+                    "application/zip"
+                ],
+                "summary": "Generate image",
+                "parameters": [
+                    {
+                        "description": "JSON request body",
+                        "name": "json",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/image.ImageGenerationRequest"
+                        }
+                    },
+                    {
+                        "type": "string",
+                        "description": "The Correlation ID of the request. Useful to show to a user on a 500 error for reporting. Format: 6 alphanumerical upper or lowercase letters.",
+                        "name": "x-correlation-id",
+                        "in": "header"
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "A zip file containing the generated images.",
+                        "schema": {
+                            "type": "bytes"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/utils.JsonError"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/utils.JsonError"
+                        }
+                    }
+                }
+            }
+        },
+        "/ai/generate-image/suggest-tags": {
+            "get": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "description": "Get tag suggestions given a certain incomplete tag",
+                "produces": [
+                    "application/binary"
+                ],
+                "summary": "Receive tag suggestions",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "The image model (e.g nai-diffusion-3)",
+                        "name": "model",
+                        "in": "query",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "The incomplete tag query",
+                        "name": "prompt",
+                        "in": "query",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "The language of the tag query, defaults to 'en'. Available languages: en, jp",
+                        "name": "lang",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "The tag suggestions given by the model",
+                        "schema": {
+                            "$ref": "#/definitions/image.TagSuggestionResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/utils.JsonError"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/utils.JsonError"
+                        }
+                    }
+                }
+            }
+        },
+        "/ai/generate-stream": {
+            "post": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "description": "Generate text using NovelAI's large language models (streaming mode). According to our Terms of Service, all generation requests must be initiated by a human action. Automating text or image generation to create excessive load on our systems is not allowed.",
+                "produces": [
+                    "application/json"
+                ],
+                "summary": "Generate text (streaming mode)",
+                "parameters": [
+                    {
+                        "description": "JSON request body",
+                        "name": "json",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/text.LMGenerateRequest"
+                        }
+                    },
+                    {
+                        "type": "string",
+                        "description": "The Correlation ID of the request. Useful to show to a user on a 500 error for reporting. Format: 6 alphanumerical upper or lowercase letters.",
+                        "name": "x-correlation-id",
+                        "in": "header"
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Text generation reply (sent as SSE events)",
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/utils.JsonError"
+                        }
+                    },
+                    "429": {
+                        "description": "Rate limited. API clients should not attempt to retry.",
+                        "schema": {
+                            "$ref": "#/definitions/utils.JsonError"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/utils.JsonError"
+                        }
+                    }
+                }
+            }
+        }
+    },
+    "definitions": {
+        "image.AugmentImageRequest": {
+            "type": "object",
+            "properties": {
+                "defry": {
+                    "type": "integer"
+                },
+                "height": {
+                    "type": "integer"
+                },
+                "image": {
+                    "type": "string"
+                },
+                "prompt": {
+                    "type": "string"
+                },
+                "req_type": {
+                    "type": "string"
+                },
+                "width": {
+                    "type": "integer"
+                }
+            }
+        },
+        "image.Coordinates": {
+            "type": "object",
+            "properties": {
+                "x": {
+                    "type": "number"
+                },
+                "y": {
+                    "type": "number"
+                }
+            }
+        },
+        "image.EncodeVibeRequest": {
+            "type": "object",
+            "properties": {
+                "image": {
+                    "description": "base64 encoded image",
+                    "type": "string"
+                },
+                "information_extracted": {
+                    "type": "number",
+                    "maximum": 1,
+                    "minimum": 0
+                },
+                "mask": {
+                    "type": "string"
+                },
+                "model": {
+                    "type": "string"
+                }
+            }
+        },
+        "image.ImageGenerationRequest": {
+            "type": "object",
+            "properties": {
+                "action": {
+                    "type": "string"
+                },
+                "input": {
+                    "type": "string"
+                },
+                "model": {
+                    "type": "string"
+                },
+                "parameters": {
+                    "$ref": "#/definitions/image.RequestParameters"
+                },
+                "url": {
+                    "type": "string"
+                }
+            }
+        },
+        "image.RequestParameters": {
+            "type": "object",
+            "properties": {
+                "add_original_image": {
+                    "type": "boolean"
+                },
+                "cfg_rescale": {
+                    "type": "number"
+                },
+                "controlnet_condition": {
+                    "description": "used by ControlNet",
+                    "type": "string"
+                },
+                "controlnet_model": {
+                    "type": "string"
+                },
+                "controlnet_strength": {
+                    "type": "number"
+                },
+                "deliberate_euler_ancestral_bug": {
+                    "description": "(Summer Sampler update) add ancestral noise even on the final step of sampling, despite the fact we're not going to run the denoiser again, default true (maintaining bug-for-bug compatibility)",
+                    "type": "boolean"
+                },
+                "dynamic_thresholding": {
+                    "type": "boolean"
+                },
+                "extra_noise_seed": {
+                    "type": "integer"
+                },
+                "height": {
+                    "type": "integer"
+                },
+                "image": {
+                    "description": "used by img2img",
+                    "type": "string"
+                },
+                "legacy": {
+                    "type": "boolean"
+                },
+                "legacy_v3_extend": {
+                    "type": "boolean"
+                },
+                "mask": {
+                    "type": "string"
+                },
+                "n_samples": {
+                    "type": "integer"
+                },
+                "negative_prompt": {
+                    "type": "string"
+                },
+                "noise": {
+                    "type": "number"
+                },
+                "noise_schedule": {
+                    "type": "string"
+                },
+                "params_version": {
+                    "type": "integer"
+                },
+                "prefer_brownian": {
+                    "type": "boolean"
+                },
+                "prompt": {
+                    "type": "string"
+                },
+                "qualityToggle": {
+                    "type": "boolean"
+                },
+                "reference_image": {
+                    "type": "string"
+                },
+                "reference_image_multiple": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "reference_information_extracted": {
+                    "type": "number"
+                },
+                "reference_information_extracted_multiple": {
+                    "type": "array",
+                    "items": {
+                        "type": "number"
+                    }
+                },
+                "reference_strength": {
+                    "type": "number"
+                },
+                "reference_strength_multiple": {
+                    "type": "array",
+                    "items": {
+                        "type": "number"
+                    }
+                },
+                "sampler": {
+                    "type": "string"
+                },
+                "scale": {
+                    "type": "number"
+                },
+                "seed": {
+                    "type": "integer"
+                },
+                "skip_cfg_above_sigma": {
+                    "description": "(Summer Sampler update) triggers Variety Boost",
+                    "type": "number"
+                },
+                "sm": {
+                    "type": "boolean"
+                },
+                "sm_dyn": {
+                    "type": "boolean"
+                },
+                "steps": {
+                    "type": "number"
+                },
+                "strength": {
+                    "type": "number"
+                },
+                "ucPreset": {
+                    "type": "integer"
+                },
+                "v4_negative_prompt": {
+                    "$ref": "#/definitions/image.V4ConditionInput"
+                },
+                "v4_prompt": {
+                    "$ref": "#/definitions/image.V4ConditionInput"
+                },
+                "width": {
+                    "type": "integer"
+                }
+            }
+        },
+        "image.TagSuggestion": {
+            "type": "object",
+            "properties": {
+                "confidence": {
+                    "type": "number"
+                },
+                "count": {
+                    "type": "integer"
+                },
+                "tag": {
+                    "type": "string"
+                }
+            }
+        },
+        "image.TagSuggestionResponse": {
+            "type": "object",
+            "properties": {
+                "tags": {
+                    "$ref": "#/definitions/image.TagSuggestion"
+                }
+            }
+        },
+        "image.V4ConditionInput": {
+            "type": "object",
+            "properties": {
+                "caption": {
+                    "$ref": "#/definitions/image.V4ExternalCaption"
+                },
+                "legacy_uc": {
+                    "type": "boolean"
+                },
+                "use_coords": {
+                    "type": "boolean"
+                },
+                "use_order": {
+                    "type": "boolean"
+                }
+            }
+        },
+        "image.V4ExternalCaption": {
+            "type": "object",
+            "properties": {
+                "base_caption": {
+                    "type": "string"
+                },
+                "char_captions": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/image.V4ExternalCharacterCaption"
+                    }
+                }
+            }
+        },
+        "image.V4ExternalCharacterCaption": {
+            "type": "object",
+            "properties": {
+                "centers": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/image.Coordinates"
+                    }
+                },
+                "char_caption": {
+                    "type": "string"
+                }
+            }
+        },
+        "text.LMGenerateRequest": {
+            "type": "object",
+            "required": [
+                "input",
+                "model",
+                "parameters"
+            ],
+            "properties": {
+                "input": {
+                    "description": "Input can be either a representation of the tokenized or non-tokenized input (see the `use_string` parameter)\nWhen requesting tokenized input (via `use_string`), input's format must be a Base64 string representation of the tokens as follows:\n - Little endian sequence of bytes that represent an integer of a specific size, determined by the tokenizer used for the model.\n - For Nerdstash V2, that is 2 bytes (16 bits) per token, Llama3 is 4 bytes (32 bits) per token\n\nNOTE: Be aware that the token length of the input + wanted max length will be validated against the user's current subscription level (via GET /user/data's subscription field)'s context size.\nRequests that trigger the validation will get an API Error if the requested context length is too large.\nIt is recommended to run tokenization using https://github.com/NovelAI/nai-js-tokenizer to get an exact number that represents the request's context size and strip accordingly. We use nerdstash v2 for Kayra.\n\nContext length per subscription:\n - Tablet: 4096 tokens\n - Scroll: 8192 tokens\n - Opus: 8192 tokens\n\n`max_length` limit per subscription:\n - Tablet: 150 tokens\n - Scroll: 150 tokens\n - Opus: 250 tokens",
+                    "type": "string",
+                    "maxLength": 100000
+                },
+                "model": {
+                    "description": "Wanted model for generations, currently only `kayra-v1` and `llama-3-erato-v1` are available. Other models are not available at the current moment. Trial users may only use `kayra-v1`.",
+                    "type": "string"
+                },
+                "n_samples": {
+                    "type": "integer"
+                },
+                "parameters": {
+                    "$ref": "#/definitions/text.RequestParameters"
+                },
+                "prefix": {
+                    "type": "string"
+                }
+            }
+        },
+        "text.LMGenerationResponse": {
+            "type": "object",
+            "properties": {
+                "logprobs": {
+                    "description": "A map for each token containing the logprobs, which are an ordered array of before and after sampling, as well as the chosen probabilities of the top N tokens (N being configured by `num_logprobs`).",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/text.LMLogprobs"
+                    }
+                },
+                "output": {
+                    "description": "Contains either the model output string (if `use_string` is set) or the packed representation of tokens",
+                    "type": "string"
+                }
+            }
+        },
+        "text.LMLogprobs": {
+            "type": "object",
+            "properties": {
+                "after": {
+                    "type": "array",
+                    "items": {
+                        "type": "array",
+                        "items": {
+                            "type": "array",
+                            "items": {
+                                "type": "number"
+                            }
+                        }
+                    }
+                },
+                "before": {
+                    "type": "array",
+                    "items": {
+                        "type": "array",
+                        "items": {
+                            "type": "array",
+                            "items": {
+                                "type": "number"
+                            }
+                        }
+                    }
+                },
+                "chosen": {
+                    "type": "array",
+                    "items": {
+                        "type": "array",
+                        "items": {
+                            "type": "array",
+                            "items": {
+                                "type": "number"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "text.LogitBiasParameters": {
+            "type": "object",
+            "required": [
+                "ensure_sequence_finish",
+                "generate_once"
+            ],
+            "properties": {
+                "bias": {
+                    "type": "number"
+                },
+                "ensure_sequence_finish": {
+                    "type": "boolean"
+                },
+                "generate_once": {
+                    "type": "boolean"
+                },
+                "sequence": {
+                    "type": "array",
+                    "items": {
+                        "type": "integer"
+                    }
+                }
+            }
+        },
+        "text.PhraseRepPenChoice": {
+            "type": "string",
+            "enum": [
+                "off",
+                "very_light",
+                "light",
+                "medium",
+                "aggressive",
+                "very_aggressive"
+            ],
+            "x-enum-varnames": [
+                "Off",
+                "VeryLight",
+                "Light",
+                "Medium",
+                "Aggressive",
+                "VeryAggressive"
+            ]
+        },
+        "text.RequestParameters": {
+            "type": "object",
+            "required": [
+                "logit_bias_exp"
+            ],
+            "properties": {
+                "bad_words_ids": {
+                    "type": "array",
+                    "maxItems": 2048,
+                    "items": {
+                        "type": "array",
+                        "items": {
+                            "type": "integer"
+                        }
+                    }
+                },
+                "bracket_ban": {
+                    "type": "boolean"
+                },
+                "cfg_scale": {
+                    "type": "number",
+                    "minimum": 0
+                },
+                "cfg_uc": {
+                    "type": "string"
+                },
+                "cropped_token": {
+                    "type": "integer"
+                },
+                "eos_token_id": {
+                    "type": "integer"
+                },
+                "force_emotion": {
+                    "type": "boolean"
+                },
+                "generate_until_sentence": {
+                    "type": "boolean"
+                },
+                "line_start_ids": {
+                    "type": "array",
+                    "items": {
+                        "type": "array",
+                        "items": {
+                            "type": "integer"
+                        }
+                    }
+                },
+                "logit_bias_exp": {
+                    "type": "array",
+                    "maxItems": 1024,
+                    "items": {
+                        "$ref": "#/definitions/text.LogitBiasParameters"
+                    }
+                },
+                "math1_quad": {
+                    "description": "Configures Unified Quad",
+                    "type": "number"
+                },
+                "math1_quad_entropy_scale": {
+                    "description": "Configures Unified Conf",
+                    "type": "number"
+                },
+                "math1_temp": {
+                    "description": "Configures Unified Linear",
+                    "type": "number"
+                },
+                "max_length": {
+                    "description": "Maximum generation length (in tokens)",
+                    "type": "integer",
+                    "maximum": 2048,
+                    "minimum": 1
+                },
+                "min_length": {
+                    "description": "Minimum generation length (in tokens)",
+                    "type": "integer",
+                    "maximum": 2048,
+                    "minimum": 1
+                },
+                "min_p": {
+                    "type": "number",
+                    "maximum": 1,
+                    "minimum": 0
+                },
+                "mirostat_lr": {
+                    "type": "number",
+                    "maximum": 1,
+                    "minimum": 0
+                },
+                "mirostat_tau": {
+                    "type": "number",
+                    "minimum": 0
+                },
+                "num_logprobs": {
+                    "description": "Amount of logprobs wanted under the logprobs response field",
+                    "type": "integer",
+                    "maximum": 30,
+                    "minimum": 0
+                },
+                "order": {
+                    "type": "array",
+                    "items": {
+                        "type": "integer"
+                    }
+                },
+                "phrase_rep_pen": {
+                    "$ref": "#/definitions/text.PhraseRepPenChoice"
+                },
+                "prefix": {
+                    "type": "string"
+                },
+                "repetition_penalty": {
+                    "type": "number"
+                },
+                "repetition_penalty_frequency": {
+                    "type": "number",
+                    "maximum": 16,
+                    "minimum": -16
+                },
+                "repetition_penalty_presence": {
+                    "type": "number",
+                    "maximum": 16,
+                    "minimum": -16
+                },
+                "repetition_penalty_range": {
+                    "type": "integer",
+                    "maximum": 8192,
+                    "minimum": 0
+                },
+                "repetition_penalty_slope": {
+                    "type": "number",
+                    "maximum": 10,
+                    "minimum": 0
+                },
+                "repetition_penalty_whitelist": {
+                    "type": "array",
+                    "items": {
+                        "type": "integer"
+                    }
+                },
+                "stop_sequences": {
+                    "type": "array",
+                    "maxItems": 1024,
+                    "items": {
+                        "type": "array",
+                        "items": {
+                            "type": "integer"
+                        }
+                    }
+                },
+                "tail_free_sampling": {
+                    "type": "number",
+                    "maximum": 1,
+                    "minimum": 0
+                },
+                "temperature": {
+                    "type": "number",
+                    "maximum": 100,
+                    "minimum": 0.1
+                },
+                "top_a": {
+                    "type": "number"
+                },
+                "top_g": {
+                    "type": "number",
+                    "maximum": 65536,
+                    "minimum": 0
+                },
+                "top_k": {
+                    "type": "integer"
+                },
+                "top_p": {
+                    "type": "number"
+                },
+                "typical_p": {
+                    "type": "number"
+                },
+                "use_string": {
+                    "description": "If the response's output should be a string containing the detokenized text, or if it should be the packed representation of the tokens (format specified on `input`'s documentation).",
+                    "type": "boolean",
+                    "default": true
+                },
+                "valid_first_tokens": {
+                    "type": "array",
+                    "items": {
+                        "type": "integer"
+                    }
+                }
+            }
+        },
+        "utils.JsonError": {
+            "type": "object",
+            "properties": {
+                "message": {
+                    "type": "string"
+                },
+                "statusCode": {
+                    "type": "integer"
+                }
+            }
+        }
+    },
+    "securityDefinitions": {
+        "ApiKeyAuth": {
+            "type": "apiKey",
+            "name": "Authorization",
+            "in": "header"
+        }
+    },
+    "externalDocs": {
+        "description": "OpenAPI",
+        "url": "https://swagger.io/resources/open-api/"
+    }
+}

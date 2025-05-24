@@ -4,11 +4,11 @@
 discord:
   token: "YOUR_DISCORD_BOT_TOKEN_HERE"
   command_prefix: "!"
-  
+
 # Download Configuration
 download:
   temp_dir: "./temp"
-  
+
 # Conversion Configuration
 conversion:
   default_bitrate: 128  # Default AAC bitrate in kbps
@@ -21,13 +21,28 @@ conversion:
     - flac
     - ogg
     - webm
-    
+
 # Upload Configuration
 upload:
   default_service: "catbox"  # Options: "catbox", "discord"
   catbox:
     user_hash: ""  # Optional: Your CatBox user hash for file management
-  
+
+# NovelAI Configuration
+novelai:
+  api_key: "YOUR_NOVELAI_API_KEY_HERE"  # Your NovelAI API key
+  base_url: "https://image.novelai.net"  # NovelAI Image Generation API base URL
+  default_model: "nai-diffusion-3"  # Default image generation model
+  default_parameters:
+    width: 832  # Default image width
+    height: 1216  # Default image height
+    steps: 28  # Number of generation steps
+    scale: 5.0  # CFG scale
+    sampler: "k_euler"  # Sampling method
+    n_samples: 1  # Number of images to generate
+    seed: -1  # Random seed (-1 for random)
+  timeout: 120  # API request timeout in seconds
+
 # Logging Configuration
 logging:
   level: "INFO"  # Options: DEBUG, INFO, WARNING, ERROR, CRITICAL
