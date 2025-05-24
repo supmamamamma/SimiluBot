@@ -98,6 +98,27 @@ class TestNovelAIClient:
         assert validated['seed'] >= 0
         assert validated['seed'] < 2**32
 
+    def test_validate_parameters_invalid_sampler(self):
+        """Test parameter validation with invalid sampler."""
+        params = {'prompt': 'test', 'sampler': 'invalid_sampler'}
+
+        with pytest.raises(ValueError, match="Sampler must be one of"):
+            self.client._validate_parameters(params)
+
+    def test_validate_parameters_invalid_noise_schedule(self):
+        """Test parameter validation with invalid noise schedule."""
+        params = {'prompt': 'test', 'noise_schedule': 'invalid_schedule'}
+
+        with pytest.raises(ValueError, match="noise_schedule must be one of"):
+            self.client._validate_parameters(params)
+
+    def test_validate_parameters_invalid_uc_preset(self):
+        """Test parameter validation with invalid ucPreset."""
+        params = {'prompt': 'test', 'ucPreset': 5}  # Out of range
+
+        with pytest.raises(ValueError, match="ucPreset must be an integer between 0 and 3"):
+            self.client._validate_parameters(params)
+
     @patch('requests.Session.post')
     def test_generate_image_success(self, mock_post):
         """Test successful image generation."""
@@ -130,9 +151,87 @@ class TestNovelAIClient:
 
         payload = kwargs['json']
         assert payload['input'] == "test prompt"
-        assert payload['model'] == "nai-diffusion-3"
+        assert payload['model'] == "nai-diffusion-4-5-curated"
         assert payload['action'] == "generate"
         assert 'parameters' in payload
+
+        # Check v4 format parameters
+        params = payload['parameters']
+        assert params['params_version'] == 3
+        assert 'v4_prompt' in params
+        assert 'v4_negative_prompt' in params
+        assert params['v4_prompt']['caption']['base_caption'] == "test prompt"
+        assert params['sampler'] == "k_euler_ancestral"
+        assert params['noise_schedule'] == "karras"
+        assert params['qualityToggle'] is True
+        assert params['prefer_brownian'] is True
+
+    def test_build_v4_payload(self):
+        """Test v4 payload generation matches expected structure."""
+        validated_params = {
+            'prompt': '1girl, scenery, air bubble, thorns, very aesthetic, location, masterpiece, no text, -0.8::feet::, rating:general',
+            'negative_prompt': 'blurry, lowres, upscaled, artistic error, film grain, scan artifacts, worst quality, bad quality, jpeg artifacts, very displeasing, chromatic aberration, halftone, multiple views, logo, too many watermarks, negative space, blank page',
+            'width': 832,
+            'height': 1216,
+            'scale': 5,
+            'sampler': 'k_euler_ancestral',
+            'steps': 23,
+            'n_samples': 1,
+            'ucPreset': 0,
+            'noise_schedule': 'karras',
+            'seed': 1605800212
+        }
+
+        payload = self.client._build_v4_payload(validated_params, "nai-diffusion-4-5-curated")
+
+        # Check top-level structure
+        assert payload['input'] == validated_params['prompt']
+        assert payload['model'] == "nai-diffusion-4-5-curated"
+        assert payload['action'] == "generate"
+
+        # Check parameters structure
+        params = payload['parameters']
+        assert params['params_version'] == 3
+        assert params['width'] == 832
+        assert params['height'] == 1216
+        assert params['scale'] == 5
+        assert params['sampler'] == 'k_euler_ancestral'
+        assert params['steps'] == 23
+        assert params['n_samples'] == 1
+        assert params['ucPreset'] == 0
+        assert params['qualityToggle'] is True
+        assert params['autoSmea'] is False
+        assert params['dynamic_thresholding'] is False
+        assert params['controlnet_strength'] == 1
+        assert params['legacy'] is False
+        assert params['add_original_image'] is True
+        assert params['cfg_rescale'] == 0
+        assert params['noise_schedule'] == 'karras'
+        assert params['legacy_v3_extend'] is False
+        assert params['skip_cfg_above_sigma'] is None
+        assert params['use_coords'] is False
+        assert params['legacy_uc'] is False
+        assert params['normalize_reference_strength_multiple'] is True
+        assert params['seed'] == 1605800212
+        assert params['characterPrompts'] == []
+        assert params['deliberate_euler_ancestral_bug'] is False
+        assert params['prefer_brownian'] is True
+
+        # Check v4_prompt structure
+        v4_prompt = params['v4_prompt']
+        assert v4_prompt['caption']['base_caption'] == validated_params['prompt']
+        assert v4_prompt['caption']['char_captions'] == []
+        assert v4_prompt['use_coords'] is False
+        assert v4_prompt['use_order'] is True
+
+        # Check v4_negative_prompt structure
+        v4_negative = params['v4_negative_prompt']
+        assert v4_negative['caption']['base_caption'] == validated_params['negative_prompt']
+        assert v4_negative['caption']['char_captions'] == []
+        assert v4_negative['legacy_uc'] is False
+
+        # Check negative_prompt is also included at top level
+        assert params['negative_prompt'] == validated_params['negative_prompt']
 
     @patch('requests.Session.post')
     def test_generate_image_auth_failure(self, mock_post):
