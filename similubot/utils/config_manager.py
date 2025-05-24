@@ -125,12 +125,30 @@ class ConfigManager:
 
     def get_default_upload_service(self) -> str:
         """
-        Get the default upload service.
+        Get the default upload service (legacy method for backward compatibility).
 
         Returns:
             The default upload service name
         """
         return self.get('upload.default_service', 'catbox')
+
+    def get_mega_upload_service(self) -> str:
+        """
+        Get the upload service for MEGA downloads.
+
+        Returns:
+            The upload service name for MEGA downloads
+        """
+        return self.get('upload.mega_downloads', self.get_default_upload_service())
+
+    def get_novelai_upload_service(self) -> str:
+        """
+        Get the upload service for NovelAI generated images.
+
+        Returns:
+            The upload service name for NovelAI images
+        """
+        return self.get('upload.novelai_images', 'discord')
 
     def get_catbox_user_hash(self) -> Optional[str]:
         """

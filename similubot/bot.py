@@ -156,9 +156,12 @@ class SimiluBot:
 
             # Add NovelAI command if available
             if self.image_generator:
+                nai_description = "Generate an AI image using NovelAI with the given text prompt."
+                nai_description += f"\nDefault upload: {self.config.get_novelai_upload_service()}"
+                nai_description += "\nAdd `discord` or `catbox` at the end to override."
                 embed.add_field(
-                    name=f"{self.bot.command_prefix}nai <prompt>",
-                    value="Generate an AI image using NovelAI with the given text prompt.",
+                    name=f"{self.bot.command_prefix}nai <prompt> [discord/catbox]",
+                    value=nai_description,
                     inline=False
                 )
 
@@ -183,22 +186,42 @@ class SimiluBot:
             await ctx.send(embed=embed)
 
         @self.bot.command(name="nai")
-        async def nai_command(ctx, *, prompt: str):
+        async def nai_command(ctx, *, args: str):
             """
             Generate an image using NovelAI.
 
+            Usage:
+                !nai <prompt>
+                !nai <prompt> discord
+                !nai <prompt> catbox
+
             Args:
-                prompt: Text prompt for image generation
+                args: Prompt text followed by optional upload service (discord/catbox)
             """
             if not self.image_generator:
                 await ctx.reply("❌ NovelAI image generation is not configured. Please check your API key in the config.")
                 return
 
-            if not prompt.strip():
+            if not args.strip():
                 await ctx.reply("❌ Please provide a prompt for image generation.")
                 return
 
-            await self._process_nai_generation(ctx.message, prompt.strip())
+            # Parse arguments for upload service override
+            # Check if the last word is a valid upload service
+            parts = args.strip().split()
+            upload_service = None
+
+            if len(parts) >= 2 and parts[-1].lower() in ["discord", "catbox"]:
+                upload_service = parts[-1].lower()
+                prompt = " ".join(parts[:-1]).strip()
+            else:
+                prompt = args.strip()
+
+            if not prompt:
+                await ctx.reply("❌ Please provide a prompt for image generation.")
+                return
+
+            await self._process_nai_generation(ctx.message, prompt, upload_service)
 
     async def _process_mega_link(
         self,
@@ -262,7 +285,7 @@ class SimiluBot:
                 return
 
             # Step 3: Upload with progress
-            upload_service = self.config.get_default_upload_service()
+            upload_service = self.config.get_mega_upload_service()
             self.logger.info(f"Starting upload to {upload_service}: {converted_file}")
 
             if upload_service == "catbox":
@@ -322,7 +345,8 @@ class SimiluBot:
     async def _process_nai_generation(
         self,
         message: discord.Message,
-        prompt: str
+        prompt: str,
+        upload_service_override: Optional[str] = None
     ):
         """
         Process a NovelAI image generation request with real-time progress tracking.
@@ -366,7 +390,7 @@ class SimiluBot:
                 return
 
             # Upload images
-            upload_service = self.config.get_default_upload_service()
+            upload_service = upload_service_override or self.config.get_novelai_upload_service()
             self.logger.info(f"Starting upload to {upload_service}: {len(file_paths)} image(s)")
 
             if upload_service == "catbox":

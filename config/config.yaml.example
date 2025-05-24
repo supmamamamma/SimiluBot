@@ -24,6 +24,11 @@ conversion:
 
 # Upload Configuration
 upload:
+  # Upload service for MEGA downloads (converted audio files)
+  mega_downloads: "catbox"  # Options: "catbox", "discord"
+  # Upload service for NovelAI generated images
+  novelai_images: "discord"  # Options: "catbox", "discord"
+  # Legacy fallback (deprecated - use specific services above)
   default_service: "catbox"  # Options: "catbox", "discord"
   catbox:
     user_hash: ""  # Optional: Your CatBox user hash for file management

@@ -98,6 +98,8 @@ download:
   temp_dir: "./temp"
 
 upload:
+  mega_downloads: "catbox"
+  novelai_images: "discord"
   default_service: "catbox"
 
 logging:
@@ -281,6 +283,85 @@ logging:
         assert embed_created
         assert nai_field_added
 
+    @patch('similubot.bot.ImageGenerator')
+    @patch('similubot.bot.MegaDownloader')
+    @patch('discord.ext.commands.Bot')
+    @pytest.mark.asyncio
+    async def test_nai_command_new_syntax(self, mock_bot_class, mock_mega_downloader, mock_image_generator):
+        """Test the new NovelAI command syntax parsing."""
+        # Mock the image generator
+        mock_generator_instance = MagicMock()
+        mock_generator_instance.generate_image_with_progress = AsyncMock(
+            return_value=(True, ["/tmp/test.png"], None)
+        )
+        mock_image_generator.return_value = mock_generator_instance
+
+        # Mock the downloader
+        mock_downloader_instance = MagicMock()
+        mock_mega_downloader.return_value = mock_downloader_instance
+
+        # Mock the bot
+        mock_bot_instance = MagicMock()
+        mock_bot_class.return_value = mock_bot_instance
+
+        # Create bot
+        bot = SimiluBot(self.config)
+
+        # Test cases for new syntax
+        test_cases = [
+            ("a beautiful landscape", "a beautiful landscape", None),
+            ("a beautiful landscape discord", "a beautiful landscape", "discord"),
+            ("a beautiful landscape catbox", "a beautiful landscape", "catbox"),
+            ("1girl, masterpiece discord", "1girl, masterpiece", "discord"),
+            ("discord themed artwork", "discord themed artwork", None),
+        ]
+
+        for input_args, expected_prompt, expected_service in test_cases:
+            # Mock Discord message and response
+            mock_message = MagicMock()
+            mock_response = MagicMock()
+            mock_response.edit = AsyncMock()
+            mock_response.delete = AsyncMock()
+            mock_message.reply = AsyncMock(return_value=mock_response)
+
+            # Mock the uploader based on expected service
+            if expected_service == "catbox":
+                bot.catbox_uploader.upload_with_progress = MagicMock(
+                    return_value=(True, "https://files.catbox.moe/test.png", None)
+                )
+            else:
+                bot.discord_uploader.upload = AsyncMock(
+                    return_value=(True, mock_message, None)
+                )
+
+            # Mock Discord progress updater
+            with patch('similubot.progress.discord_updater.DiscordProgressUpdater') as mock_updater:
+                mock_updater_instance = MagicMock()
+                mock_updater_instance.create_callback.return_value = MagicMock()
+                mock_updater.return_value = mock_updater_instance
+
+                # Parse the arguments using the bot's logic
+                parts = input_args.strip().split()
+                upload_service = None
+
+                if len(parts) >= 2 and parts[-1].lower() in ["discord", "catbox"]:
+                    upload_service = parts[-1].lower()
+                    prompt = " ".join(parts[:-1]).strip()
+                else:
+                    prompt = input_args.strip()
+
+                # Verify parsing matches expected results
+                assert prompt == expected_prompt
+                assert upload_service == expected_service
+
+                # Test the actual command processing
+                await bot._process_nai_generation(mock_message, prompt, upload_service)
+
+            # Verify the image generator was called with correct prompt
+            mock_generator_instance.generate_image_with_progress.assert_called()
+            call_args = mock_generator_instance.generate_image_with_progress.call_args
+            assert call_args[1]['prompt'] == expected_prompt
+
     @patch('similubot.bot.MegaDownloader')
     @patch('discord.ext.commands.Bot')
     def test_about_command_without_nai(self, mock_bot_class, mock_mega_downloader):
@@ -295,6 +376,8 @@ download:
   temp_dir: "./temp"
 
 upload:
+  mega_downloads: "catbox"
+  novelai_images: "discord"
   default_service: "catbox"
 
 logging:
