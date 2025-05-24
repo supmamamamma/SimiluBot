@@ -128,9 +128,9 @@ class TestNovelAIClient:
             zip_file.writestr('image_0.png', b'fake_image_data')
         zip_data = zip_buffer.getvalue()
 
-        # Mock successful HTTP response
+        # Mock successful HTTP response (NovelAI returns 200 for successful generation)
         mock_response = MagicMock()
-        mock_response.status_code = 201
+        mock_response.status_code = 200
         mock_response.content = zip_data
         mock_post.return_value = mock_response
 
@@ -232,6 +232,31 @@ class TestNovelAIClient:
 
         # Check negative_prompt is also included at top level
         assert params['negative_prompt'] == validated_params['negative_prompt']
+
+    @patch('requests.Session.post')
+    def test_generate_image_success_http_201(self, mock_post):
+        """Test successful image generation with HTTP 201 response."""
+        # Create mock ZIP response
+        zip_buffer = io.BytesIO()
+        with zipfile.ZipFile(zip_buffer, 'w') as zip_file:
+            zip_file.writestr('image_0.png', b'fake_image_data')
+        zip_data = zip_buffer.getvalue()
+
+        # Mock successful HTTP response with 201 status
+        mock_response = MagicMock()
+        mock_response.status_code = 201
+        mock_response.content = zip_data
+        mock_post.return_value = mock_response
+
+        # Test generation
+        success, images, error = self.client.generate_image("test prompt")
+
+        # Verify results
+        assert success is True
+        assert images is not None
+        assert len(images) == 1
+        assert images[0] == b'fake_image_data'
+        assert error is None
 
     @patch('requests.Session.post')
     def test_generate_image_auth_failure(self, mock_post):

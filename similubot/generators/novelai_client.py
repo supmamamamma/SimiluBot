@@ -273,6 +273,7 @@ class NovelAIClient:
             )
 
             # Check response status
+            self.logger.debug(f"API response status: HTTP {response.status_code}")
             if response.status_code == 401:
                 error_msg = "Authentication failed. Please check your NovelAI API key."
                 self.logger.error(error_msg)
@@ -281,7 +282,7 @@ class NovelAIClient:
                 error_msg = "Rate limited. Please wait before making another request."
                 self.logger.error(error_msg)
                 return False, None, error_msg
-            elif response.status_code != 201:
+            elif response.status_code not in [200, 201]:
                 error_msg = f"API request failed: HTTP {response.status_code}"
                 if response.headers.get('content-type', '').startswith('application/json'):
                     try:
