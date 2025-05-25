@@ -644,7 +644,8 @@ class TestNovelAIClient:
         params = payload['parameters']
         assert params['use_coords'] is True
         assert len(params['characterPrompts']) == 2
-        assert params['uc'] == ""  # Empty base UC for multi-character
+        # Verify uc field is NOT present (corrected payload structure)
+        assert 'uc' not in params
 
         # Check characterPrompts structure
         char_prompts = params['characterPrompts']
@@ -662,10 +663,13 @@ class TestNovelAIClient:
         assert v4_prompt['caption']['char_captions'][0]['char_caption'] == 'girl with blue hair, dress'
         assert v4_prompt['caption']['char_captions'][1]['char_caption'] == 'boy with red eyes, armor'
 
-        # Check v4_negative_prompt structure
+        # Check v4_negative_prompt structure (FIXED: should contain full negative prompt)
         v4_negative = params['v4_negative_prompt']
-        assert v4_negative['caption']['base_caption'] == ""  # Empty for multi-character
+        assert v4_negative['caption']['base_caption'] == "blurry, low quality"  # Should contain full negative prompt
         assert len(v4_negative['caption']['char_captions']) == 2
+
+        # Verify negative_prompt field is present (FIXED: was missing)
+        assert params['negative_prompt'] == "blurry, low quality"
 
     def test_build_v4_payload_single_character_fallback(self):
         """Test v4 payload generation without character data (single character fallback)."""
@@ -691,6 +695,12 @@ class TestNovelAIClient:
         assert len(params['characterPrompts']) == 0
         assert len(params['v4_prompt']['caption']['char_captions']) == 0
         assert params['v4_negative_prompt']['caption']['base_caption'] == 'blurry, low quality'
+
+        # Verify negative_prompt field is present (FIXED: was missing)
+        assert params['negative_prompt'] == 'blurry, low quality'
+
+        # Verify uc field is NOT present (corrected payload structure)
+        assert 'uc' not in params
 
     @patch('requests.Session.post')
     def test_generate_image_multicharacter_success(self, mock_post):

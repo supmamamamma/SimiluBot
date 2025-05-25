@@ -369,7 +369,6 @@ class NovelAIClient:
                 "normalize_reference_strength_multiple": validated_params.get('normalize_reference_strength_multiple', True),
                 "seed": validated_params['seed'],
                 "characterPrompts": character_prompts,
-                "uc": "",  # Empty base UC for multi-character
                 "v4_prompt": {
                     "caption": {
                         "base_caption": prompt,
@@ -380,11 +379,12 @@ class NovelAIClient:
                 },
                 "v4_negative_prompt": {
                     "caption": {
-                        "base_caption": "" if character_prompts else negative_prompt,  # Empty base for multi-character
+                        "base_caption": negative_prompt,  # Always include full negative prompt for both modes
                         "char_captions": negative_char_captions
                     },
                     "legacy_uc": validated_params.get('legacy_uc', False)
                 },
+                "negative_prompt": negative_prompt,  # Include negative_prompt field for both modes
                 "deliberate_euler_ancestral_bug": validated_params.get('deliberate_euler_ancestral_bug', False),
                 "prefer_brownian": validated_params.get('prefer_brownian', True)
             }
