@@ -42,7 +42,7 @@ class NovelAIClient:
         self.session.headers.update({
             'Authorization': f'Bearer {self.api_key}',
             'Content-Type': 'application/json',
-            'User-Agent': 'SimiluBot/1.0'
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36 Edg/136.0.0.0'
         })
 
         self.logger.debug(f"Initialized NovelAI client with base URL: {self.base_url}")
