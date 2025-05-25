@@ -342,7 +342,7 @@ class NovelAIClient:
 
         # Build the v4 payload structure
         payload = {
-            "input": prompt,
+            "input": prompt + "very aesthetic, location, masterpiece, no text, -0.8::feet::, rating:general",
             "model": model,
             "action": "generate",
             "parameters": {
