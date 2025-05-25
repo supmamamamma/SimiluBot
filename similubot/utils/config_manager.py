@@ -211,6 +211,42 @@ class ConfigManager:
             raise ValueError("NovelAI API key not set in configuration")
         return api_key
 
+    def is_auth_enabled(self) -> bool:
+        """
+        Check if the authorization system is enabled.
+
+        Returns:
+            True if authorization is enabled, False otherwise
+        """
+        return self.get('authorization.enabled', True)
+
+    def get_admin_ids(self) -> list:
+        """
+        Get the list of administrator Discord IDs.
+
+        Returns:
+            List of administrator Discord IDs
+        """
+        return self.get('authorization.admin_ids', [])
+
+    def get_auth_config_path(self) -> str:
+        """
+        Get the path to the authorization configuration file.
+
+        Returns:
+            Path to the authorization configuration file
+        """
+        return self.get('authorization.config_path', 'config/authorization.json')
+
+    def should_notify_admins_on_unauthorized(self) -> bool:
+        """
+        Check if admins should be notified on unauthorized access attempts.
+
+        Returns:
+            True if admins should be notified, False otherwise
+        """
+        return self.get('authorization.notify_admins_on_unauthorized', True)
+
     def get_novelai_base_url(self) -> str:
         """
         Get the NovelAI API base URL.

@@ -5,6 +5,14 @@ discord:
   token: "YOUR_DISCORD_BOT_TOKEN_HERE"
   command_prefix: "!"
 
+# Authorization Configuration
+authorization:
+  enabled: true  # Set to false to disable authorization (all users have access)
+  admin_ids:  # List of Discord user IDs with administrative privileges
+    # - "123456789012345678"  # Replace with actual Discord user IDs
+  config_path: "config/authorization.json"  # Path to authorization config file
+  notify_admins_on_unauthorized: true  # Notify admins when unauthorized access is attempted
+
 # Download Configuration
 download:
   temp_dir: "./temp"

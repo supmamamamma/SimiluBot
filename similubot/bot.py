@@ -15,6 +15,8 @@ from similubot.uploaders.discord_uploader import DiscordUploader
 from similubot.generators.image_generator import ImageGenerator
 from similubot.utils.config_manager import ConfigManager
 from similubot.progress.discord_updater import DiscordProgressUpdater
+from similubot.auth.authorization_manager import AuthorizationManager
+from similubot.auth.unauthorized_handler import UnauthorizedAccessHandler
 
 class SimiluBot:
     """
@@ -89,6 +91,18 @@ class SimiluBot:
             self.logger.warning(f"NovelAI not configured: {e}")
             self.image_generator = None
 
+        # Initialize authorization system
+        self.auth_manager = AuthorizationManager(
+            config_path=self.config.get_auth_config_path(),
+            auth_enabled=self.config.is_auth_enabled()
+        )
+
+        # Initialize unauthorized access handler
+        self.unauthorized_handler = UnauthorizedAccessHandler(
+            auth_manager=self.auth_manager,
+            bot=self.bot
+        )
+
     def _setup_event_handlers(self):
         """Set up Discord event handlers."""
         @self.bot.event
@@ -119,6 +133,15 @@ class SimiluBot:
             if mega_links and not message.content.startswith(self.bot.command_prefix):
                 self.logger.info(f"Found MEGA links in message: {len(mega_links)}")
 
+                # Check authorization for MEGA auto-detection
+                if not self.auth_manager.is_authorized(message.author.id, feature_name="mega_auto_detection"):
+                    await self.unauthorized_handler.handle_unauthorized_access(
+                        user=message.author,
+                        feature_name="mega_auto_detection",
+                        channel=message.channel
+                    )
+                    return
+
                 # Process the first link
                 await self._process_mega_link(message, mega_links[0])
 
@@ -133,6 +156,15 @@ class SimiluBot:
                 url: MEGA link to download
                 bitrate: AAC bitrate in kbps (optional)
             """
+            # Check authorization
+            if not self.auth_manager.is_authorized(ctx.author.id, command_name="mega"):
+                await self.unauthorized_handler.handle_unauthorized_access(
+                    user=ctx.author,
+                    command_name="mega",
+                    channel=ctx.channel
+                )
+                return
+
             if not self.downloader.is_mega_link(url):
                 await ctx.reply("Invalid MEGA link. Please provide a valid MEGA link.")
                 return
@@ -202,6 +234,15 @@ class SimiluBot:
             Args:
                 args: Prompt text followed by optional upload service, character parameters, and size specification
             """
+            # Check authorization
+            if not self.auth_manager.is_authorized(ctx.author.id, command_name="nai"):
+                await self.unauthorized_handler.handle_unauthorized_access(
+                    user=ctx.author,
+                    command_name="nai",
+                    channel=ctx.channel
+                )
+                return
+
             if not self.image_generator:
                 await ctx.reply("❌ NovelAI image generation is not configured. Please check your API key in the config.")
                 return
@@ -258,6 +299,251 @@ class SimiluBot:
                         return
 
             await self._process_nai_generation(ctx.message, prompt, upload_service, character_args, size_spec)
+
+        # Authorization management commands
+        @self.bot.group(name="auth", invoke_without_command=True)
+        async def auth_group(ctx):
+            """Authorization management commands (admin only)."""
+            # Check if user is admin
+            if not self.auth_manager.is_admin(ctx.author.id):
+                await ctx.reply("❌ You don't have permission to use authorization commands.")
+                return
+
+            # Show help for auth commands
+            embed = discord.Embed(
+                title="🔐 Authorization Management",
+                description="Manage user permissions for SimiluBot",
+                color=0x3498db
+            )
+
+            embed.add_field(
+                name=f"{self.bot.command_prefix}auth status",
+                value="Show authorization system status and statistics",
+                inline=False
+            )
+
+            embed.add_field(
+                name=f"{self.bot.command_prefix}auth user <user_id>",
+                value="Show permissions for a specific user",
+                inline=False
+            )
+
+            embed.add_field(
+                name=f"{self.bot.command_prefix}auth add <user_id> <level> [modules...]",
+                value="Add/update user permissions\nLevels: `full`, `module`, `none`\nModules: `mega_download`, `novelai`, `general`",
+                inline=False
+            )
+
+            embed.add_field(
+                name=f"{self.bot.command_prefix}auth remove <user_id>",
+                value="Remove user from authorization system",
+                inline=False
+            )
+
+            await ctx.send(embed=embed)
+
+        @auth_group.command(name="status")
+        async def auth_status(ctx):
+            """Show authorization system status."""
+            if not self.auth_manager.is_admin(ctx.author.id):
+                await ctx.reply("❌ You don't have permission to use authorization commands.")
+                return
+
+            stats = self.auth_manager.get_stats()
+
+            embed = discord.Embed(
+                title="🔐 Authorization System Status",
+                color=0x2ecc71 if self.auth_manager.auth_enabled else 0xe74c3c
+            )
+
+            embed.add_field(
+                name="System Status",
+                value="🟢 Enabled" if self.auth_manager.auth_enabled else "🔴 Disabled",
+                inline=True
+            )
+
+            embed.add_field(
+                name="Total Users",
+                value=str(stats["total_users"]),
+                inline=True
+            )
+
+            embed.add_field(
+                name="Admin Users",
+                value=str(stats["admin_users"]),
+                inline=True
+            )
+
+            embed.add_field(
+                name="Full Access",
+                value=str(stats["full_access_users"]),
+                inline=True
+            )
+
+            embed.add_field(
+                name="Module Access",
+                value=str(stats["module_access_users"]),
+                inline=True
+            )
+
+            embed.add_field(
+                name="No Access",
+                value=str(stats["no_access_users"]),
+                inline=True
+            )
+
+            await ctx.send(embed=embed)
+
+        @auth_group.command(name="user")
+        async def auth_user(ctx, user_id: str):
+            """Show permissions for a specific user."""
+            if not self.auth_manager.is_admin(ctx.author.id):
+                await ctx.reply("❌ You don't have permission to use authorization commands.")
+                return
+
+            user_perms = self.auth_manager.get_user_permissions(user_id)
+
+            if not user_perms:
+                await ctx.reply(f"❌ User `{user_id}` not found in authorization system.")
+                return
+
+            # Try to get Discord user info
+            try:
+                discord_user = await self.bot.fetch_user(int(user_id))
+                user_display = f"{discord_user.display_name} ({discord_user.name})"
+            except:
+                user_display = "Unknown User"
+
+            embed = discord.Embed(
+                title=f"👤 User Permissions: {user_display}",
+                description=f"User ID: `{user_id}`",
+                color=0x3498db
+            )
+
+            embed.add_field(
+                name="Permission Level",
+                value=user_perms.permission_level.value.title(),
+                inline=True
+            )
+
+            embed.add_field(
+                name="Modules",
+                value=", ".join([m.value for m in user_perms.modules]) if user_perms.modules else "None",
+                inline=True
+            )
+
+            embed.add_field(
+                name="Admin Status",
+                value="✅ Yes" if user_perms.is_admin() else "❌ No",
+                inline=True
+            )
+
+            if user_perms.notes:
+                embed.add_field(
+                    name="Notes",
+                    value=user_perms.notes,
+                    inline=False
+                )
+
+            await ctx.send(embed=embed)
+
+        @auth_group.command(name="add")
+        async def auth_add(ctx, user_id: str, level: str, *modules):
+            """Add or update user permissions."""
+            if not self.auth_manager.is_admin(ctx.author.id):
+                await ctx.reply("❌ You don't have permission to use authorization commands.")
+                return
+
+            # Validate permission level
+            from .auth.permission_types import PermissionLevel, ModulePermission
+            try:
+                permission_level = PermissionLevel(level.lower())
+            except ValueError:
+                await ctx.reply(f"❌ Invalid permission level: `{level}`. Valid levels: `full`, `module`, `none`, `admin`")
+                return
+
+            # Validate modules if provided
+            module_set = set()
+            if modules:
+                for module_name in modules:
+                    try:
+                        module_set.add(ModulePermission(module_name.lower()))
+                    except ValueError:
+                        await ctx.reply(f"❌ Invalid module: `{module_name}`. Valid modules: `mega_download`, `novelai`, `general`")
+                        return
+
+            # Add/update user
+            success = self.auth_manager.add_user(
+                user_id=user_id,
+                permission_level=permission_level,
+                modules=module_set,
+                notes=f"Added by {ctx.author.display_name} on {discord.utils.utcnow().strftime('%Y-%m-%d %H:%M:%S')}"
+            )
+
+            if success:
+                # Try to get Discord user info
+                try:
+                    discord_user = await self.bot.fetch_user(int(user_id))
+                    user_display = f"{discord_user.display_name} ({discord_user.name})"
+                except:
+                    user_display = f"User ID: {user_id}"
+
+                embed = discord.Embed(
+                    title="✅ User Permissions Updated",
+                    description=f"Successfully updated permissions for {user_display}",
+                    color=0x2ecc71
+                )
+
+                embed.add_field(
+                    name="Permission Level",
+                    value=permission_level.value.title(),
+                    inline=True
+                )
+
+                if module_set:
+                    embed.add_field(
+                        name="Modules",
+                        value=", ".join([m.value for m in module_set]),
+                        inline=True
+                    )
+
+                await ctx.send(embed=embed)
+            else:
+                await ctx.reply(f"❌ Failed to update permissions for user `{user_id}`.")
+
+        @auth_group.command(name="remove")
+        async def auth_remove(ctx, user_id: str):
+            """Remove user from authorization system."""
+            if not self.auth_manager.is_admin(ctx.author.id):
+                await ctx.reply("❌ You don't have permission to use authorization commands.")
+                return
+
+            # Check if user exists
+            user_perms = self.auth_manager.get_user_permissions(user_id)
+            if not user_perms:
+                await ctx.reply(f"❌ User `{user_id}` not found in authorization system.")
+                return
+
+            # Remove user
+            success = self.auth_manager.remove_user(user_id)
+
+            if success:
+                # Try to get Discord user info
+                try:
+                    discord_user = await self.bot.fetch_user(int(user_id))
+                    user_display = f"{discord_user.display_name} ({discord_user.name})"
+                except:
+                    user_display = f"User ID: {user_id}"
+
+                embed = discord.Embed(
+                    title="✅ User Removed",
+                    description=f"Successfully removed {user_display} from authorization system",
+                    color=0x2ecc71
+                )
+
+                await ctx.send(embed=embed)
+            else:
+                await ctx.reply(f"❌ Failed to remove user `{user_id}` from authorization system.")
 
     async def _process_mega_link(
         self,
