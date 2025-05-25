@@ -342,7 +342,7 @@ class NovelAIClient:
 
         # Build the v4 payload structure
         payload = {
-            "input": prompt + "very aesthetic, location, masterpiece, no text, -0.8::feet::, rating:general",
+            "input": prompt + ",very aesthetic, location, masterpiece, no text, -0.8::feet::, rating:general",
             "model": model,
             "action": "generate",
             "parameters": {
@@ -371,7 +371,7 @@ class NovelAIClient:
                 "characterPrompts": character_prompts,
                 "v4_prompt": {
                     "caption": {
-                        "base_caption": prompt,
+                        "base_caption": prompt + ",very aesthetic, location, masterpiece, no text, -0.8::feet::, rating:general",
                         "char_captions": char_captions
                     },
                     "use_coords": use_coords,
