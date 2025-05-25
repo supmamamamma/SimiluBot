@@ -1,28 +1,40 @@
-"""Main Discord bot implementation for SimiluBot."""
-import asyncio
+"""Refactored main Discord bot implementation for SimiluBot."""
 import logging
 import os
-import re
-from typing import Optional, List, Dict, Any, Union, Tuple
-
+from typing import Optional
 import discord
 from discord.ext import commands
 
+# Core modules
+from similubot.core.command_registry import CommandRegistry
+from similubot.core.event_handler import EventHandler
+
+# Command modules
+from similubot.commands.mega_commands import MegaCommands
+from similubot.commands.novelai_commands import NovelAICommands
+from similubot.commands.auth_commands import AuthCommands
+from similubot.commands.general_commands import GeneralCommands
+
+# Existing modules
 from similubot.downloaders.mega_downloader import MegaDownloader
 from similubot.converters.audio_converter import AudioConverter
 from similubot.uploaders.catbox_uploader import CatboxUploader
 from similubot.uploaders.discord_uploader import DiscordUploader
 from similubot.generators.image_generator import ImageGenerator
 from similubot.utils.config_manager import ConfigManager
-from similubot.progress.discord_updater import DiscordProgressUpdater
 from similubot.auth.authorization_manager import AuthorizationManager
 from similubot.auth.unauthorized_handler import UnauthorizedAccessHandler
+
 
 class SimiluBot:
     """
     Main Discord bot implementation for SimiluBot.
-
-    Handles Discord events and coordinates the different modules.
+    
+    Refactored modular architecture with separation of concerns:
+    - Command registry for centralized command management
+    - Event handler for Discord events
+    - Separate command modules for different features
+    - Clean initialization and lifecycle management
     """
 
     def __init__(self, config: ConfigManager):
@@ -42,20 +54,23 @@ class SimiluBot:
         self.bot = commands.Bot(
             command_prefix=self.config.get('discord.command_prefix', '!'),
             intents=intents,
-            help_command=commands.DefaultHelpCommand()
+            help_command=None  # We'll use our custom help command
         )
 
-        # Initialize modules
-        self._init_modules()
-
-        # Set up event handlers
+        # Initialize core components
+        self._init_core_modules()
+        
+        # Initialize command modules
+        self._init_command_modules()
+        
+        # Register commands and events
+        self._register_commands()
         self._setup_event_handlers()
 
-        # Set up commands
-        self._setup_commands()
+        self.logger.info("SimiluBot initialized successfully")
 
-    def _init_modules(self):
-        """Initialize the bot modules."""
+    def _init_core_modules(self) -> None:
+        """Initialize core bot modules."""
         # Create temp directory if it doesn't exist
         temp_dir = self.config.get_download_temp_dir()
         if not os.path.exists(temp_dir):
@@ -96,923 +111,181 @@ class SimiluBot:
             config_path=self.config.get_auth_config_path(),
             auth_enabled=self.config.is_auth_enabled()
         )
-
+        
         # Initialize unauthorized access handler
         self.unauthorized_handler = UnauthorizedAccessHandler(
             auth_manager=self.auth_manager,
             bot=self.bot
         )
 
-    def _setup_event_handlers(self):
-        """Set up Discord event handlers."""
-        @self.bot.event
-        async def on_ready():
-            self.logger.info(f"Bot is ready. Logged in as {self.bot.user.name} ({self.bot.user.id})")
-
-            # Set bot status
-            activity = discord.Activity(
-                type=discord.ActivityType.listening,
-                name=f"{self.bot.command_prefix}about"
-            )
-            await self.bot.change_presence(activity=activity)
-
-        @self.bot.event
-        async def on_message(message):
-            # Ignore messages from the bot itself
-            if message.author == self.bot.user:
-                return
-
-            # Process commands
-            await self.bot.process_commands(message)
-
-            # Check for MEGA links in messages
-            if not message.content:
-                return
-
-            mega_links = self.downloader.extract_mega_links(message.content)
-            if mega_links and not message.content.startswith(self.bot.command_prefix):
-                self.logger.info(f"Found MEGA links in message: {len(mega_links)}")
-
-                # Check authorization for MEGA auto-detection
-                if not self.auth_manager.is_authorized(message.author.id, feature_name="mega_auto_detection"):
-                    await self.unauthorized_handler.handle_unauthorized_access(
-                        user=message.author,
-                        feature_name="mega_auto_detection",
-                        channel=message.channel
-                    )
-                    return
-
-                # Process the first link
-                await self._process_mega_link(message, mega_links[0])
-
-    def _setup_commands(self):
-        """Set up Discord bot commands."""
-        @self.bot.command(name="mega")
-        async def mega_command(ctx, url: str, bitrate: Optional[int] = None):
-            """
-            Download a file from MEGA and convert it to AAC.
-
-            Args:
-                url: MEGA link to download
-                bitrate: AAC bitrate in kbps (optional)
-            """
-            # Check authorization
-            if not self.auth_manager.is_authorized(ctx.author.id, command_name="mega"):
-                await self.unauthorized_handler.handle_unauthorized_access(
-                    user=ctx.author,
-                    command_name="mega",
-                    channel=ctx.channel
-                )
-                return
-
-            if not self.downloader.is_mega_link(url):
-                await ctx.reply("Invalid MEGA link. Please provide a valid MEGA link.")
-                return
-
-            await self._process_mega_link(ctx.message, url, bitrate)
-
-        @self.bot.command(name="about")
-        async def about_command(ctx):
-            """Show information about the bot."""
-            embed = discord.Embed(
-                title="About SimiluBot",
-                description="A bot for downloading MEGA links and converting media to AAC format.",
-                color=discord.Color.blue()
-            )
-
-            embed.add_field(
-                name=f"{self.bot.command_prefix}mega <url> [bitrate]",
-                value="Download a file from MEGA and convert it to AAC format.",
-                inline=False
-            )
-
-            # Add NovelAI command if available
-            if self.image_generator:
-                nai_description = "Generate an AI image using NovelAI with the given text prompt."
-                nai_description += f"\nDefault upload: {self.config.get_novelai_upload_service()}"
-                nai_description += "\nAdd `discord` or `catbox` to override upload service."
-                nai_description += "\nAdd `char1:[description] char2:[description]` for multi-character generation."
-                nai_description += "\nAdd `size:portrait/landscape/square` to specify image dimensions."
-                embed.add_field(
-                    name=f"{self.bot.command_prefix}nai <prompt> [discord/catbox] [char1:[desc]...] [size:xxx]",
-                    value=nai_description,
-                    inline=False
-                )
-
-            embed.add_field(
-                name="Automatic MEGA Link Detection",
-                value="The bot will automatically detect and process MEGA links in messages.",
-                inline=False
-            )
-
-            embed.add_field(
-                name="Supported Formats",
-                value=", ".join(self.config.get_supported_formats()),
-                inline=False
-            )
-
-            embed.add_field(
-                name="Default Bitrate",
-                value=f"{self.config.get_default_bitrate()} kbps",
-                inline=False
-            )
-
-            await ctx.send(embed=embed)
-
-        @self.bot.command(name="nai")
-        async def nai_command(ctx, *, args: str):
-            """
-            Generate an image using NovelAI.
-
-            Usage:
-                !nai <prompt>
-                !nai <prompt> discord
-                !nai <prompt> catbox
-                !nai <prompt> [discord/catbox] char1:[description] char2:[description]
-                !nai <prompt> [discord/catbox] [char1:[desc]...] [size:portrait/landscape/square]
-
-            Args:
-                args: Prompt text followed by optional upload service, character parameters, and size specification
-            """
-            # Check authorization
-            if not self.auth_manager.is_authorized(ctx.author.id, command_name="nai"):
-                await self.unauthorized_handler.handle_unauthorized_access(
-                    user=ctx.author,
-                    command_name="nai",
-                    channel=ctx.channel
-                )
-                return
-
-            if not self.image_generator:
-                await ctx.reply("❌ NovelAI image generation is not configured. Please check your API key in the config.")
-                return
-
-            if not args.strip():
-                await ctx.reply("❌ Please provide a prompt for image generation.")
-                return
-
-            # Parse arguments for upload service, character parameters, and size specification
-            # Use regex to properly extract parameters with spaces
-            import re
-
-            upload_service = None
-            character_args = []
-            size_spec = None
-            remaining_text = args.strip()
-
-            # Extract upload service (discord/catbox) - must be a standalone word
-            upload_match = re.search(r'\b(discord|catbox)\b', remaining_text, re.IGNORECASE)
-            if upload_match:
-                upload_service = upload_match.group(1).lower()
-                remaining_text = remaining_text.replace(upload_match.group(0), '', 1).strip()
-
-            # Extract size specification (size:portrait, size:landscape, size:square)
-            size_pattern = re.compile(r'\bsize:(portrait|landscape|square)\b', re.IGNORECASE)
-            size_match = size_pattern.search(remaining_text)
-            if size_match:
-                size_spec = size_match.group(1).lower()
-                remaining_text = size_pattern.sub('', remaining_text).strip()
-
-            # Extract character parameters using regex
-            char_pattern = re.compile(r'char(\d+):\[([^\]]+)\]', re.IGNORECASE)
-            char_matches = char_pattern.findall(remaining_text)
-
-            for char_num, char_desc in char_matches:
-                character_args.append(f"char{char_num}:[{char_desc}]")
-
-            # Remove character parameters from the text to get the prompt
-            prompt = char_pattern.sub('', remaining_text).strip()
-            # Clean up extra spaces
-            prompt = re.sub(r'\s+', ' ', prompt).strip()
-
-            if not prompt:
-                await ctx.reply("❌ Please provide a prompt for image generation.")
-                return
-
-            # Validate character parameters if provided
-            if character_args:
-                self.logger.info(f"Multi-character generation requested with {len(character_args)} characters")
-                # Basic validation - detailed validation will happen in the client
-                for char_arg in character_args:
-                    if not char_arg.lower().startswith("char") or ":[" not in char_arg or not char_arg.endswith("]"):
-                        await ctx.reply(f"❌ Invalid character syntax: '{char_arg}'. Expected format: 'char1:[description]'")
-                        return
-
-            await self._process_nai_generation(ctx.message, prompt, upload_service, character_args, size_spec)
-
-        # Authorization management commands
-        @self.bot.group(name="auth", invoke_without_command=True)
-        async def auth_group(ctx):
-            """Authorization management commands (admin only)."""
-            # Check if user is admin
-            if not self.auth_manager.is_admin(ctx.author.id):
-                await ctx.reply("❌ You don't have permission to use authorization commands.")
-                return
-
-            # Show help for auth commands
-            embed = discord.Embed(
-                title="🔐 Authorization Management",
-                description="Manage user permissions for SimiluBot",
-                color=0x3498db
-            )
-
-            embed.add_field(
-                name=f"{self.bot.command_prefix}auth status",
-                value="Show authorization system status and statistics",
-                inline=False
-            )
-
-            embed.add_field(
-                name=f"{self.bot.command_prefix}auth user <user_id>",
-                value="Show permissions for a specific user",
-                inline=False
-            )
-
-            embed.add_field(
-                name=f"{self.bot.command_prefix}auth add <user_id> <level> [modules...]",
-                value="Add/update user permissions\nLevels: `full`, `module`, `none`\nModules: `mega_download`, `novelai`, `general`",
-                inline=False
-            )
-
-            embed.add_field(
-                name=f"{self.bot.command_prefix}auth remove <user_id>",
-                value="Remove user from authorization system",
-                inline=False
-            )
-
-            await ctx.send(embed=embed)
-
-        @auth_group.command(name="status")
-        async def auth_status(ctx):
-            """Show authorization system status."""
-            if not self.auth_manager.is_admin(ctx.author.id):
-                await ctx.reply("❌ You don't have permission to use authorization commands.")
-                return
-
-            stats = self.auth_manager.get_stats()
-
-            embed = discord.Embed(
-                title="🔐 Authorization System Status",
-                color=0x2ecc71 if self.auth_manager.auth_enabled else 0xe74c3c
-            )
-
-            embed.add_field(
-                name="System Status",
-                value="🟢 Enabled" if self.auth_manager.auth_enabled else "🔴 Disabled",
-                inline=True
-            )
-
-            embed.add_field(
-                name="Total Users",
-                value=str(stats["total_users"]),
-                inline=True
-            )
-
-            embed.add_field(
-                name="Admin Users",
-                value=str(stats["admin_users"]),
-                inline=True
-            )
-
-            embed.add_field(
-                name="Full Access",
-                value=str(stats["full_access_users"]),
-                inline=True
-            )
-
-            embed.add_field(
-                name="Module Access",
-                value=str(stats["module_access_users"]),
-                inline=True
-            )
-
-            embed.add_field(
-                name="No Access",
-                value=str(stats["no_access_users"]),
-                inline=True
-            )
-
-            await ctx.send(embed=embed)
-
-        @auth_group.command(name="user")
-        async def auth_user(ctx, user_id: str):
-            """Show permissions for a specific user."""
-            if not self.auth_manager.is_admin(ctx.author.id):
-                await ctx.reply("❌ You don't have permission to use authorization commands.")
-                return
-
-            user_perms = self.auth_manager.get_user_permissions(user_id)
-
-            if not user_perms:
-                await ctx.reply(f"❌ User `{user_id}` not found in authorization system.")
-                return
-
-            # Try to get Discord user info
-            try:
-                discord_user = await self.bot.fetch_user(int(user_id))
-                user_display = f"{discord_user.display_name} ({discord_user.name})"
-            except:
-                user_display = "Unknown User"
-
-            embed = discord.Embed(
-                title=f"👤 User Permissions: {user_display}",
-                description=f"User ID: `{user_id}`",
-                color=0x3498db
-            )
-
-            embed.add_field(
-                name="Permission Level",
-                value=user_perms.permission_level.value.title(),
-                inline=True
-            )
-
-            embed.add_field(
-                name="Modules",
-                value=", ".join([m.value for m in user_perms.modules]) if user_perms.modules else "None",
-                inline=True
-            )
-
-            embed.add_field(
-                name="Admin Status",
-                value="✅ Yes" if user_perms.is_admin() else "❌ No",
-                inline=True
-            )
-
-            if user_perms.notes:
-                embed.add_field(
-                    name="Notes",
-                    value=user_perms.notes,
-                    inline=False
-                )
-
-            await ctx.send(embed=embed)
-
-        @auth_group.command(name="add")
-        async def auth_add(ctx, user_id: str, level: str, *modules):
-            """Add or update user permissions."""
-            if not self.auth_manager.is_admin(ctx.author.id):
-                await ctx.reply("❌ You don't have permission to use authorization commands.")
-                return
-
-            # Validate permission level
-            from .auth.permission_types import PermissionLevel, ModulePermission
-            try:
-                permission_level = PermissionLevel(level.lower())
-            except ValueError:
-                await ctx.reply(f"❌ Invalid permission level: `{level}`. Valid levels: `full`, `module`, `none`, `admin`")
-                return
-
-            # Validate modules if provided
-            module_set = set()
-            if modules:
-                for module_name in modules:
-                    try:
-                        module_set.add(ModulePermission(module_name.lower()))
-                    except ValueError:
-                        await ctx.reply(f"❌ Invalid module: `{module_name}`. Valid modules: `mega_download`, `novelai`, `general`")
-                        return
-
-            # Add/update user
-            success = self.auth_manager.add_user(
-                user_id=user_id,
-                permission_level=permission_level,
-                modules=module_set,
-                notes=f"Added by {ctx.author.display_name} on {discord.utils.utcnow().strftime('%Y-%m-%d %H:%M:%S')}"
-            )
-
-            if success:
-                # Try to get Discord user info
-                try:
-                    discord_user = await self.bot.fetch_user(int(user_id))
-                    user_display = f"{discord_user.display_name} ({discord_user.name})"
-                except:
-                    user_display = f"User ID: {user_id}"
-
-                embed = discord.Embed(
-                    title="✅ User Permissions Updated",
-                    description=f"Successfully updated permissions for {user_display}",
-                    color=0x2ecc71
-                )
-
-                embed.add_field(
-                    name="Permission Level",
-                    value=permission_level.value.title(),
-                    inline=True
-                )
-
-                if module_set:
-                    embed.add_field(
-                        name="Modules",
-                        value=", ".join([m.value for m in module_set]),
-                        inline=True
-                    )
-
-                await ctx.send(embed=embed)
-            else:
-                await ctx.reply(f"❌ Failed to update permissions for user `{user_id}`.")
-
-        @auth_group.command(name="remove")
-        async def auth_remove(ctx, user_id: str):
-            """Remove user from authorization system."""
-            if not self.auth_manager.is_admin(ctx.author.id):
-                await ctx.reply("❌ You don't have permission to use authorization commands.")
-                return
-
-            # Check if user exists
-            user_perms = self.auth_manager.get_user_permissions(user_id)
-            if not user_perms:
-                await ctx.reply(f"❌ User `{user_id}` not found in authorization system.")
-                return
-
-            # Remove user
-            success = self.auth_manager.remove_user(user_id)
-
-            if success:
-                # Try to get Discord user info
-                try:
-                    discord_user = await self.bot.fetch_user(int(user_id))
-                    user_display = f"{discord_user.display_name} ({discord_user.name})"
-                except:
-                    user_display = f"User ID: {user_id}"
-
-                embed = discord.Embed(
-                    title="✅ User Removed",
-                    description=f"Successfully removed {user_display} from authorization system",
-                    color=0x2ecc71
-                )
-
-                await ctx.send(embed=embed)
-            else:
-                await ctx.reply(f"❌ Failed to remove user `{user_id}` from authorization system.")
-
-    async def _process_mega_link(
-        self,
-        message: discord.Message,
-        url: str,
-        bitrate: Optional[int] = None
-    ):
-        """
-        Process a MEGA link with real-time progress tracking.
-
-        Args:
-            message: Discord message containing the link
-            url: MEGA link to process
-            bitrate: AAC bitrate in kbps (optional)
-        """
-        # Use default bitrate if not specified
-        if bitrate is None:
-            bitrate = self.config.get_default_bitrate()
-
-        # Create initial progress embed
-        embed = discord.Embed(
-            title="🔄 Media Processing",
-            description=f"Preparing to download and convert... (bitrate: {bitrate} kbps)",
-            color=0x3498db
+        # Initialize command registry
+        self.command_registry = CommandRegistry(
+            bot=self.bot,
+            auth_manager=self.auth_manager,
+            unauthorized_handler=self.unauthorized_handler
         )
-        response = await message.reply(embed=embed)
 
-        # Create Discord progress updater
-        discord_updater = DiscordProgressUpdater(response, update_interval=5.0)
-        progress_callback = discord_updater.create_callback()
+        self.logger.debug("Core modules initialized")
 
-        # Initialize variables for cleanup
-        file_path: Optional[str] = None
-        converted_file: Optional[str] = None
-
-        try:
-            # Step 1: Download with progress
-            self.logger.info(f"Starting MEGA download: {url}")
-            success, file_path, error = await asyncio.to_thread(
-                self.downloader.download_with_progress,
-                url,
-                progress_callback
-            )
-
-            if not success or not file_path:
-                await self._send_error_embed(response, "Download Failed", error or "Unknown error")
-                return
-
-            # Step 2: Convert with progress
-            self.logger.info(f"Starting audio conversion: {file_path}")
-            success, converted_file, error = await asyncio.to_thread(
-                self.converter.convert_to_aac_with_progress,
-                file_path,
-                bitrate,
-                None,  # Use default output file path
-                progress_callback
-            )
-
-            if not success or not converted_file:
-                await self._send_error_embed(response, "Conversion Failed", error or "Unknown error")
-                return
-
-            # Step 2.5: Optimize file size for CatBox if needed
-            upload_service = self.config.get_mega_upload_service()
-            if upload_service == "catbox":
-                optimized_file, final_bitrate = await self._optimize_file_size_for_catbox(
-                    file_path, converted_file, bitrate, progress_callback
-                )
-                if optimized_file:
-                    # Clean up the original converted file if it was replaced
-                    if optimized_file != converted_file and os.path.exists(converted_file):
-                        try:
-                            os.remove(converted_file)
-                            self.logger.debug(f"Removed original converted file: {converted_file}")
-                        except Exception as e:
-                            self.logger.warning(f"Failed to remove original converted file: {e}")
-                    converted_file = optimized_file
-                    bitrate = final_bitrate
-                else:
-                    # Optimization failed - file is too large even at lowest bitrate
-                    await self._send_error_embed(
-                        response,
-                        "File Too Large",
-                        "The converted file exceeds CatBox's 200MB limit even at the lowest bitrate (96 kbps). "
-                        "Please try a shorter audio file or use Discord upload instead."
-                    )
-                    return
-
-            # Step 3: Upload with progress
-            self.logger.info(f"Starting upload to {upload_service}: {converted_file}")
-
-            if upload_service == "catbox":
-                success, file_url, error = await asyncio.to_thread(
-                    self.catbox_uploader.upload_with_progress,
-                    converted_file,
-                    progress_callback
-                )
-
-                if not success or not file_url:
-                    await self._send_error_embed(response, "Upload Failed", error or "Unknown error")
-                    return
-
-                # Create success embed
-                file_name = os.path.basename(converted_file)
-                file_size = os.path.getsize(converted_file)
-
-                success_embed = discord.Embed(
-                    title="✅ Processing Complete",
-                    description="Your file has been successfully downloaded, converted, and uploaded!",
-                    color=0x2ecc71
-                )
-                success_embed.add_field(name="📁 File", value=file_name, inline=True)
-                success_embed.add_field(name="🎵 Bitrate", value=f"{bitrate} kbps", inline=True)
-                success_embed.add_field(name="📊 Size", value=self._format_file_size(file_size), inline=True)
-                success_embed.add_field(name="🔗 Download Link", value=file_url, inline=False)
-                success_embed.timestamp = discord.utils.utcnow()
-
-                await response.edit(embed=success_embed)
-
-            else:  # discord upload
-                success, discord_msg, error = await self.discord_uploader.upload(
-                    converted_file,
-                    message.channel,
-                    content=f"✅ Converted file ({bitrate} kbps)"
-                )
-
-                if not success:
-                    await self._send_error_embed(response, "Upload Failed", error or "Unknown error")
-                    return
-
-                # Delete the processing message since file is uploaded directly
-                await response.delete()
-
-        except Exception as e:
-            self.logger.error(f"Error processing MEGA link: {e}", exc_info=True)
-            await self._send_error_embed(
-                response,
-                "Processing Error",
-                f"An unexpected error occurred: {str(e)}"
-            )
-
-        finally:
-            # Clean up temporary files
-            self._cleanup_temp_files([file_path, converted_file])
-
-    async def _optimize_file_size_for_catbox(
-        self,
-        original_file: str,
-        converted_file: str,
-        current_bitrate: int,
-        progress_callback
-    ) -> Tuple[Optional[str], int]:
-        """
-        Optimize file size for CatBox upload by reducing bitrate if file is too large.
-
-        Args:
-            original_file: Path to the original downloaded file
-            converted_file: Path to the currently converted file
-            current_bitrate: Current bitrate used for conversion
-            progress_callback: Progress callback for updates
-
-        Returns:
-            Tuple containing:
-                - Path to optimized file (None if optimization failed)
-                - Final bitrate used
-        """
-        # CatBox file size limit (200MB)
-        CATBOX_SIZE_LIMIT = 200 * 1024 * 1024  # 200MB in bytes
-
-        # Bitrate hierarchy for optimization
-        BITRATE_HIERARCHY = [512, 384, 320, 256, 192, 128, 96]
-
-        try:
-            # Check current file size
-            current_size = os.path.getsize(converted_file)
-            self.logger.info(f"Checking file size: {self._format_file_size(current_size)} (limit: 200MB)")
-
-            # If file is within limit, return as-is
-            if current_size <= CATBOX_SIZE_LIMIT:
-                self.logger.info("File size is within CatBox limit, no optimization needed")
-                return converted_file, current_bitrate
-
-            self.logger.warning(f"File size ({self._format_file_size(current_size)}) exceeds CatBox limit, starting optimization")
-
-            # Find current bitrate position in hierarchy
-            try:
-                current_index = BITRATE_HIERARCHY.index(current_bitrate)
-            except ValueError:
-                # If current bitrate is not in hierarchy, find the closest lower one
-                current_index = -1
-                for i, bitrate in enumerate(BITRATE_HIERARCHY):
-                    if bitrate < current_bitrate:
-                        current_index = i
-                        break
-                if current_index == -1:
-                    current_index = 0  # Start from the highest available
-
-            # Try each lower bitrate
-            for i in range(current_index + 1, len(BITRATE_HIERARCHY)):
-                target_bitrate = BITRATE_HIERARCHY[i]
-                self.logger.info(f"Attempting optimization with {target_bitrate} kbps bitrate")
-
-                # Update progress
-                if progress_callback:
-                    await progress_callback(
-                        "optimization",
-                        f"🔧 Optimizing file size (trying {target_bitrate} kbps)...",
-                        0.5
-                    )
-
-                # Convert with lower bitrate
-                success, optimized_file, error = await asyncio.to_thread(
-                    self.converter.convert_to_aac_with_progress,
-                    original_file,
-                    target_bitrate,
-                    None,  # Use default output file path
-                    progress_callback
-                )
-
-                if not success or not optimized_file:
-                    self.logger.warning(f"Failed to convert with {target_bitrate} kbps: {error}")
-                    continue
-
-                # Check new file size
-                new_size = os.path.getsize(optimized_file)
-                self.logger.info(f"New file size with {target_bitrate} kbps: {self._format_file_size(new_size)}")
-
-                if new_size <= CATBOX_SIZE_LIMIT:
-                    self.logger.info(f"Successfully optimized file to {self._format_file_size(new_size)} with {target_bitrate} kbps")
-
-                    # Update progress
-                    if progress_callback:
-                        await progress_callback(
-                            "optimization",
-                            f"✅ File optimized to {target_bitrate} kbps ({self._format_file_size(new_size)})",
-                            1.0
-                        )
-
-                    return optimized_file, target_bitrate
-                else:
-                    # File still too large, clean up and try next bitrate
-                    try:
-                        os.remove(optimized_file)
-                        self.logger.debug(f"Removed oversized file: {optimized_file}")
-                    except Exception as e:
-                        self.logger.warning(f"Failed to remove oversized file: {e}")
-
-            # If we get here, even the lowest bitrate didn't work
-            self.logger.error("Failed to optimize file size even with lowest bitrate (96 kbps)")
-
-            # Update progress with failure
-            if progress_callback:
-                await progress_callback(
-                    "optimization",
-                    "❌ Unable to reduce file size below 200MB limit",
-                    1.0
-                )
-
-            return None, current_bitrate
-
-        except Exception as e:
-            self.logger.error(f"Error during file size optimization: {e}", exc_info=True)
-
-            # Update progress with error
-            if progress_callback:
-                await progress_callback(
-                    "optimization",
-                    f"❌ Optimization failed: {str(e)}",
-                    1.0
-                )
-
-            return None, current_bitrate
-
-    async def _process_nai_generation(
-        self,
-        message: discord.Message,
-        prompt: str,
-        upload_service_override: Optional[str] = None,
-        character_args: Optional[List[str]] = None,
-        size_spec: Optional[str] = None
-    ):
-        """
-        Process a NovelAI image generation request with real-time progress tracking.
-
-        Args:
-            message: Discord message containing the request
-            prompt: Text prompt for image generation
-            upload_service_override: Optional upload service override
-            character_args: Optional list of character argument strings
-            size_spec: Optional size specification (portrait/landscape/square)
-        """
-        # Create initial progress embed
-        generation_type = "Multi-character" if character_args else "Single-character"
-        char_info = f" ({len(character_args)} characters)" if character_args else ""
-        embed = discord.Embed(
-            title="🎨 AI Image Generation",
-            description=f"{generation_type} generation{char_info}\nPrompt: `{prompt[:100]}{'...' if len(prompt) > 100 else ''}`",
-            color=0x9b59b6
+    def _init_command_modules(self) -> None:
+        """Initialize command modules."""
+        # Initialize MEGA commands
+        self.mega_commands = MegaCommands(
+            config=self.config,
+            downloader=self.downloader,
+            converter=self.converter,
+            catbox_uploader=self.catbox_uploader,
+            discord_uploader=self.discord_uploader
         )
-        response = await message.reply(embed=embed)
 
-        # Create Discord progress updater
-        discord_updater = DiscordProgressUpdater(response, update_interval=3.0)
-        progress_callback = discord_updater.create_callback()
-
-        # Initialize variables for cleanup
-        file_paths: Optional[List[str]] = None
-
-        try:
-            # Get default parameters from config
-            default_params = self.config.get_novelai_default_parameters()
-            model = self.config.get_novelai_default_model()
-
-            # Apply size specification if provided
-            if size_spec:
-                size_dimensions = {
-                    'portrait': (832, 1216),
-                    'landscape': (1216, 832),
-                    'square': (1024, 1024)
-                }
-                if size_spec in size_dimensions:
-                    width, height = size_dimensions[size_spec]
-                    default_params['width'] = width
-                    default_params['height'] = height
-                    self.logger.info(f"Using {size_spec} size: {width}x{height}")
-
-            if character_args:
-                self.logger.info(f"Starting NovelAI multi-character generation: '{prompt[:100]}...' with {len(character_args)} characters")
-            else:
-                self.logger.info(f"Starting NovelAI single-character generation: '{prompt[:100]}...'")
-
-            # Generate image with progress
-            success, file_paths, error = await self.image_generator.generate_image_with_progress(
-                prompt=prompt,
-                model=model,
-                progress_callback=progress_callback,
-                character_args=character_args,
-                **default_params
-            )
-
-            if not success or not file_paths:
-                await self._send_error_embed(response, "Generation Failed", error or "Unknown error")
-                return
-
-            # Upload images
-            upload_service = upload_service_override or self.config.get_novelai_upload_service()
-            self.logger.info(f"Starting upload to {upload_service}: {len(file_paths)} image(s)")
-
-            if upload_service == "catbox":
-                # Upload to CatBox
-                upload_urls = []
-                for i, file_path in enumerate(file_paths):
-                    success, file_url, error = await asyncio.to_thread(
-                        self.catbox_uploader.upload_with_progress,
-                        file_path,
-                        progress_callback
-                    )
-
-                    if not success or not file_url:
-                        await self._send_error_embed(response, "Upload Failed", error or "Unknown error")
-                        return
-
-                    upload_urls.append(file_url)
-
-                # Create success embed
-                success_embed = discord.Embed(
-                    title="✅ Image Generation Complete",
-                    description="Your AI-generated image is ready!",
-                    color=0x2ecc71
-                )
-                success_embed.add_field(name="🎨 Prompt", value=f"`{prompt[:200]}{'...' if len(prompt) > 200 else ''}`", inline=False)
-                success_embed.add_field(name="🤖 Model", value=model, inline=True)
-                success_embed.add_field(name="📊 Images", value=str(len(upload_urls)), inline=True)
-
-                # Add download links
-                for i, url in enumerate(upload_urls):
-                    success_embed.add_field(
-                        name=f"🔗 Download Link {i+1}" if len(upload_urls) > 1 else "🔗 Download Link",
-                        value=url,
-                        inline=False
-                    )
-
-                success_embed.timestamp = discord.utils.utcnow()
-                await response.edit(embed=success_embed)
-
-            else:  # discord upload
-                # Upload directly to Discord
-                for i, file_path in enumerate(file_paths):
-                    content = f"✅ AI-generated image {i+1}/{len(file_paths)}" if len(file_paths) > 1 else "✅ AI-generated image"
-                    content += f"\n**Prompt:** `{prompt[:150]}{'...' if len(prompt) > 150 else ''}`"
-
-                    success, discord_msg, error = await self.discord_uploader.upload(
-                        file_path,
-                        message.channel,
-                        content=content
-                    )
-
-                    if not success:
-                        await self._send_error_embed(response, "Upload Failed", error or "Unknown error")
-                        return
-
-                # Delete the processing message since files are uploaded directly
-                await response.delete()
-
-        except Exception as e:
-            self.logger.error(f"Error processing NovelAI generation: {e}", exc_info=True)
-            await self._send_error_embed(
-                response,
-                "Generation Error",
-                f"An unexpected error occurred: {str(e)}"
-            )
-
-        finally:
-            # Clean up temporary files
-            if file_paths:
-                self._cleanup_temp_files(file_paths)
-
-    async def _send_error_embed(self, message: discord.Message, title: str, description: str):
-        """
-        Send an error embed to Discord.
-
-        Args:
-            message: Discord message to edit
-            title: Error title
-            description: Error description
-        """
-        error_embed = discord.Embed(
-            title=f"❌ {title}",
-            description=description,
-            color=0xe74c3c
+        # Initialize NovelAI commands
+        self.novelai_commands = NovelAICommands(
+            config=self.config,
+            image_generator=self.image_generator,
+            catbox_uploader=self.catbox_uploader,
+            discord_uploader=self.discord_uploader
         )
-        error_embed.timestamp = discord.utils.utcnow()
-        await message.edit(embed=error_embed)
 
-    def _format_file_size(self, size_bytes: int) -> str:
-        """
-        Format file size in bytes to human-readable format.
+        # Initialize authorization commands
+        self.auth_commands = AuthCommands(
+            auth_manager=self.auth_manager
+        )
 
-        Args:
-            size_bytes: Size in bytes
+        # Initialize general commands
+        self.general_commands = GeneralCommands(
+            config=self.config,
+            image_generator=self.image_generator
+        )
 
-        Returns:
-            Formatted size string
-        """
-        if size_bytes >= 1024 * 1024 * 1024:
-            return f"{size_bytes / (1024 * 1024 * 1024):.1f} GB"
-        elif size_bytes >= 1024 * 1024:
-            return f"{size_bytes / (1024 * 1024):.1f} MB"
-        elif size_bytes >= 1024:
-            return f"{size_bytes / 1024:.1f} KB"
+        self.logger.debug("Command modules initialized")
+
+    def _register_commands(self) -> None:
+        """Register all commands with the command registry."""
+        # Register MEGA commands
+        self.mega_commands.register_commands(self.command_registry)
+
+        # Register NovelAI commands (if available)
+        if self.novelai_commands.is_available():
+            self.novelai_commands.register_commands(self.command_registry)
         else:
-            return f"{size_bytes} B"
+            self.logger.info("NovelAI commands not registered (not configured)")
 
-    def _cleanup_temp_files(self, file_paths: Union[List[str], List[Optional[str]]]):
+        # Register authorization commands (if enabled)
+        if self.auth_commands.is_available():
+            self.auth_commands.register_commands(self.command_registry)
+        else:
+            self.logger.info("Authorization commands not registered (auth disabled)")
+
+        # Register general commands
+        self.general_commands.register_commands(self.command_registry)
+
+        self.logger.info("All commands registered successfully")
+
+    def _setup_event_handlers(self) -> None:
+        """Set up Discord event handlers."""
+        # Initialize event handler
+        self.event_handler = EventHandler(
+            bot=self.bot,
+            auth_manager=self.auth_manager,
+            unauthorized_handler=self.unauthorized_handler,
+            mega_downloader=self.downloader,
+            mega_processor_callback=self.mega_commands.process_mega_link
+        )
+
+        self.logger.debug("Event handlers set up")
+
+    async def start(self, token: str) -> None:
         """
-        Clean up temporary files.
+        Start the Discord bot.
 
         Args:
-            file_paths: List of file paths to clean up
+            token: Discord bot token
         """
-        for file_path in file_paths:
-            if file_path and os.path.exists(file_path):
-                try:
-                    os.remove(file_path)
-                    self.logger.debug(f"Removed temporary file: {file_path}")
-                except Exception as e:
-                    self.logger.warning(f"Failed to remove temporary file {file_path}: {e}")
+        try:
+            self.logger.info("Starting SimiluBot...")
+            await self.bot.start(token)
+        except Exception as e:
+            self.logger.error(f"Failed to start bot: {e}", exc_info=True)
+            raise
 
-    def run(self):
-        """Run the Discord bot."""
-        token = self.config.get_discord_token()
-        self.bot.run(token)
+    async def close(self) -> None:
+        """Close the Discord bot and clean up resources."""
+        try:
+            self.logger.info("Shutting down SimiluBot...")
+            
+            # Send shutdown notification if configured
+            # await self.event_handler.send_shutdown_notification(channel_id)
+            
+            await self.bot.close()
+            self.logger.info("SimiluBot shut down successfully")
+        except Exception as e:
+            self.logger.error(f"Error during shutdown: {e}", exc_info=True)
+
+    def run(self, token: str) -> None:
+        """
+        Run the Discord bot (blocking).
+
+        Args:
+            token: Discord bot token
+        """
+        try:
+            self.bot.run(token)
+        except KeyboardInterrupt:
+            self.logger.info("Bot stopped by user")
+        except Exception as e:
+            self.logger.error(f"Bot crashed: {e}", exc_info=True)
+            raise
+
+    def get_stats(self) -> dict:
+        """
+        Get bot statistics.
+
+        Returns:
+            Dictionary with bot statistics
+        """
+        stats = {
+            "bot_ready": self.bot.is_ready(),
+            "guild_count": len(self.bot.guilds),
+            "user_count": sum(guild.member_count or 0 for guild in self.bot.guilds),
+            "command_count": len(self.command_registry.get_registered_commands()),
+            "authorization_enabled": self.auth_manager.auth_enabled,
+            "novelai_available": self.image_generator is not None
+        }
+
+        if self.auth_manager.auth_enabled:
+            stats.update(self.auth_manager.get_stats())
+
+        return stats
+
+    def get_registered_commands(self) -> dict:
+        """
+        Get all registered commands.
+
+        Returns:
+            Dictionary of registered commands
+        """
+        return self.command_registry.get_registered_commands()
+
+    def is_ready(self) -> bool:
+        """
+        Check if the bot is ready.
+
+        Returns:
+            True if bot is ready, False otherwise
+        """
+        return self.bot.is_ready()
+
+    @property
+    def user(self) -> Optional[discord.ClientUser]:
+        """Get the bot user."""
+        return self.bot.user
+
+    @property
+    def latency(self) -> float:
+        """Get the bot latency."""
+        return self.bot.latency
+
+    @property
+    def guilds(self) -> list:
+        """Get the bot guilds."""
+        return self.bot.guilds
