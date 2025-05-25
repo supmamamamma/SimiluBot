@@ -18,7 +18,7 @@ from similubot.utils.config_manager import ConfigManager
 class NovelAICommands:
     """
     NovelAI image generation command handlers.
-    
+
     Handles AI image generation with multi-character support,
     size specifications, and flexible upload options.
     """
@@ -52,11 +52,26 @@ class NovelAICommands:
         Args:
             registry: Command registry instance
         """
+        usage_examples = [
+            "!nai beautiful sunset over mountains - Simple landscape generation",
+            "!nai anime girl with blue hair, detailed artwork discord - Upload to Discord",
+            "!nai cyberpunk cityscape size:landscape catbox - Landscape format, upload to CatBox",
+            "!nai group scene char1:[elf warrior, armor] char2:[mage, robes] - Multi-character generation"
+        ]
+
+        help_text = (
+            "Generates AI images using NovelAI's advanced diffusion models. "
+            f"Images are uploaded to {self.config.get_novelai_upload_service()} by default. "
+            "Supports multi-character generation and various image sizes."
+        )
+
         registry.register_command(
             name="nai",
             callback=self.nai_command,
             description="Generate an image using NovelAI",
-            required_permission="nai"
+            required_permission="nai",
+            usage_examples=usage_examples,
+            help_text=help_text
         )
 
         self.logger.debug("NovelAI commands registered")
@@ -153,11 +168,11 @@ class NovelAICommands:
             Error message if validation fails, None if valid
         """
         self.logger.info(f"Multi-character generation requested with {len(character_args)} characters")
-        
+
         for char_arg in character_args:
             if not char_arg.lower().startswith("char") or ":[" not in char_arg or not char_arg.endswith("]"):
                 return f"❌ Invalid character syntax: '{char_arg}'. Expected format: 'char1:[description]'"
-        
+
         return None
 
     async def process_nai_generation(
@@ -261,7 +276,7 @@ class NovelAICommands:
             "landscape": {"width": 1216, "height": 832},
             "square": {"width": 1024, "height": 1024}
         }
-        
+
         return size_mappings.get(size_spec, {"width": 1024, "height": 1024})
 
     async def _upload_images(
@@ -298,7 +313,7 @@ class NovelAICommands:
                 description=f"Generated {len(file_paths)} image(s) successfully!",
                 color=0x2ecc71
             )
-            
+
             success_embed.add_field(
                 name="🎨 Prompt",
                 value=f"`{prompt[:200]}{'...' if len(prompt) > 200 else ''}`",

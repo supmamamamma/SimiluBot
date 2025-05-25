@@ -12,7 +12,7 @@ from similubot.auth.permission_types import PermissionLevel, ModulePermission
 class AuthCommands:
     """
     Authorization management command handlers.
-    
+
     Provides admin commands for managing user permissions,
     viewing authorization status, and user management.
     """
@@ -34,7 +34,7 @@ class AuthCommands:
         Args:
             registry: Command registry instance
         """
-        # Create auth command group
+        # Create auth command group with help information
         auth_group = registry.register_command_group(
             name="auth",
             description="Authorization management commands (admin only)",

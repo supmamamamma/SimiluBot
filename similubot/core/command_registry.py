@@ -1,4 +1,5 @@
 """Command registry system for SimiluBot."""
+import inspect
 import logging
 from typing import Dict, List, Callable, Any, Optional
 from dataclasses import dataclass
@@ -17,17 +18,19 @@ class CommandInfo:
     description: str
     required_permission: Optional[str] = None
     admin_only: bool = False
+    usage_examples: Optional[List[str]] = None
+    help_text: Optional[str] = None
 
 
 class CommandRegistry:
     """
     Registry for managing bot commands with authorization integration.
-    
+
     Provides a centralized way to register commands with automatic
     authorization checking and consistent error handling.
     """
 
-    def __init__(self, bot: commands.Bot, auth_manager: AuthorizationManager, 
+    def __init__(self, bot: commands.Bot, auth_manager: AuthorizationManager,
                  unauthorized_handler: UnauthorizedAccessHandler):
         """
         Initialize the command registry.
@@ -50,7 +53,9 @@ class CommandRegistry:
         callback: Callable,
         description: str,
         required_permission: Optional[str] = None,
-        admin_only: bool = False
+        admin_only: bool = False,
+        usage_examples: Optional[List[str]] = None,
+        help_text: Optional[str] = None
     ) -> None:
         """
         Register a command with the bot.
@@ -61,24 +66,28 @@ class CommandRegistry:
             description: Command description
             required_permission: Required permission (command name or feature name)
             admin_only: Whether command requires admin privileges
+            usage_examples: List of usage examples for help display
+            help_text: Additional help text for the command
         """
         command_info = CommandInfo(
             name=name,
             callback=callback,
             description=description,
             required_permission=required_permission,
-            admin_only=admin_only
+            admin_only=admin_only,
+            usage_examples=usage_examples,
+            help_text=help_text
         )
-        
+
         self._commands[name] = command_info
-        
+
         # Create wrapped command with authorization
         wrapped_callback = self._wrap_command_with_auth(command_info)
-        
+
         # Register with Discord.py
         command = commands.Command(wrapped_callback, name=name, help=description)
         self.bot.add_command(command)
-        
+
         self.logger.debug(f"Registered command: {name}")
 
     def register_command_group(
@@ -103,7 +112,7 @@ class CommandRegistry:
             if admin_only and not self.auth_manager.is_admin(ctx.author.id):
                 await ctx.reply("❌ You don't have permission to use these commands.")
                 return
-            
+
             # Show group help
             await ctx.send_help(ctx.command)
 
@@ -115,10 +124,10 @@ class CommandRegistry:
 
         group = commands.Group(wrapped_callback, name=name, help=description, invoke_without_command=True)
         self.bot.add_command(group)
-        
+
         self._command_groups[name] = []
         self.logger.debug(f"Registered command group: {name}")
-        
+
         return group
 
     def register_group_command(
@@ -145,21 +154,21 @@ class CommandRegistry:
             description=description,
             admin_only=admin_only
         )
-        
+
         # Create wrapped command with authorization
         if admin_only:
             wrapped_callback = self._wrap_admin_command(callback)
         else:
             wrapped_callback = callback
-        
+
         # Register with group
         command = commands.Command(wrapped_callback, name=name, help=description)
         group.add_command(command)
-        
+
         # Track in registry
         if group.name in self._command_groups:
             self._command_groups[group.name].append(command_info)
-        
+
         self.logger.debug(f"Registered group command: {group.name}.{name}")
 
     def _wrap_command_with_auth(self, command_info: CommandInfo) -> Callable:
@@ -187,7 +196,7 @@ class CommandRegistry:
                 # Check permission-based commands
                 elif command_info.required_permission:
                     if not self.auth_manager.is_authorized(
-                        ctx.author.id, 
+                        ctx.author.id,
                         command_name=command_info.required_permission
                     ):
                         await self.unauthorized_handler.handle_unauthorized_access(
@@ -197,9 +206,21 @@ class CommandRegistry:
                         )
                         return
 
-                # Execute the original command
-                await command_info.callback(ctx, *args, **kwargs)
+                # Validate arguments before executing command
+                if not await self._validate_command_arguments(command_info, ctx, *args, **kwargs):
+                    return
 
+                # Execute the original command
+                # Handle both instance methods and regular functions
+                await self._call_command_callback(command_info.callback, ctx, *args, **kwargs)
+
+            except TypeError as e:
+                # Handle missing argument errors gracefully
+                if "missing" in str(e) and "required positional argument" in str(e):
+                    await self._send_command_help(command_info, ctx)
+                else:
+                    self.logger.error(f"TypeError in command {command_info.name}: {e}", exc_info=True)
+                    await ctx.reply(f"❌ Invalid arguments provided. Use `!help {command_info.name}` for usage information.")
             except Exception as e:
                 self.logger.error(f"Error in command {command_info.name}: {e}", exc_info=True)
                 await ctx.reply(f"❌ An error occurred while executing the command: {str(e)}")
@@ -207,8 +228,236 @@ class CommandRegistry:
         # Preserve function metadata
         wrapped_callback.__name__ = command_info.callback.__name__
         wrapped_callback.__doc__ = command_info.callback.__doc__
-        
+
         return wrapped_callback
+
+    async def _call_command_callback(self, callback: Callable, ctx, *args, **kwargs):
+        """
+        Call a command callback, handling both instance methods and regular functions.
+
+        This method properly handles the argument passing for commands that expect
+        variable-length text input (like NovelAI commands with *, args: str).
+
+        Args:
+            callback: The command callback function
+            ctx: Discord command context
+            *args: Positional arguments from Discord.py
+            **kwargs: Keyword arguments from Discord.py
+        """
+        # Get the function signature
+        sig = inspect.signature(callback)
+        params = list(sig.parameters.values())
+
+        self.logger.debug(f"Calling command callback: {callback.__name__}")
+        self.logger.debug(f"Parameters: {[p.name for p in params]}")
+        self.logger.debug(f"Args count: {len(args)}")
+
+        # Check if this is a method (has 'self' parameter)
+        if params and params[0].name == 'self':
+            # This is an instance method, skip 'self' parameter
+            params = params[1:]
+
+        # Check for keyword-only arguments (*, args: str pattern)
+        has_var_keyword_only = any(
+            p.kind == inspect.Parameter.VAR_KEYWORD or
+            (p.kind == inspect.Parameter.KEYWORD_ONLY and p.name in ['args', 'arg'])
+            for p in params
+        )
+
+        # Check for the specific pattern: ctx, *, args: str
+        if (len(params) >= 2 and
+            params[0].name == 'ctx' and
+            len(params) == 2 and
+            params[1].kind == inspect.Parameter.KEYWORD_ONLY and
+            params[1].name == 'args'):
+
+            # This is the NovelAI command pattern: (ctx, *, args: str)
+            # Join all arguments into a single string
+            args_str = ' '.join(str(arg) for arg in args) if args else ''
+            self.logger.debug(f"Using keyword-only args pattern: '{args_str}'")
+            await callback(ctx, args=args_str)
+
+        elif has_var_keyword_only:
+            # Handle other keyword-only patterns
+            await callback(ctx, **kwargs)
+
+        else:
+            # Regular function call
+            await callback(ctx, *args, **kwargs)
+
+    async def _validate_command_arguments(self, command_info: CommandInfo, ctx, *args, **kwargs) -> bool:
+        """
+        Validate command arguments and show help if needed.
+
+        Args:
+            command_info: Command information
+            ctx: Discord command context
+            *args: Positional arguments
+            **kwargs: Keyword arguments
+
+        Returns:
+            True if arguments are valid, False if help was shown
+        """
+        # Get the function signature
+        sig = inspect.signature(command_info.callback)
+        params = list(sig.parameters.values())
+
+        # Skip 'self' parameter if this is an instance method
+        if params and params[0].name == 'self':
+            params = params[1:]
+
+        # Skip 'ctx' parameter
+        if params and params[0].name == 'ctx':
+            params = params[1:]
+
+        # Check for specific command patterns that need special handling
+
+        # NovelAI pattern: (*, args: str) - requires at least some text
+        if (len(params) == 1 and
+            params[0].kind == inspect.Parameter.KEYWORD_ONLY and
+            params[0].name == 'args'):
+
+            # For NovelAI commands, check if args is empty
+            if not args or (len(args) == 1 and not args[0].strip()):
+                await self._send_command_help(command_info, ctx)
+                return False
+            return True
+
+        # MEGA pattern: (url: str, bitrate: Optional[int] = None)
+        if (command_info.name == "mega" and
+            len(params) >= 1 and
+            params[0].name == 'url'):
+
+            # Check if URL is missing
+            if not args:
+                await self._send_command_help(command_info, ctx)
+                return False
+            return True
+
+        # Auth group commands - handled by Discord.py group system
+        if command_info.name.startswith("auth."):
+            return True
+
+        # For other commands, check required parameters
+        required_params = [p for p in params if p.default == inspect.Parameter.empty]
+
+        if len(args) < len(required_params):
+            await self._send_command_help(command_info, ctx)
+            return False
+
+        return True
+
+    async def _send_command_help(self, command_info: CommandInfo, ctx) -> None:
+        """
+        Send helpful usage information for a command.
+
+        Args:
+            command_info: Command information
+            ctx: Discord command context
+        """
+        embed = discord.Embed(
+            title=f"📖 Help: {ctx.bot.command_prefix}{command_info.name}",
+            description=command_info.description,
+            color=0x3498db
+        )
+
+        # Add usage examples based on command type
+        if command_info.name == "mega":
+            embed.add_field(
+                name="📝 Usage",
+                value=f"`{ctx.bot.command_prefix}mega <MEGA_URL> [bitrate]`",
+                inline=False
+            )
+
+            examples = [
+                f"`{ctx.bot.command_prefix}mega https://mega.nz/file/example`",
+                f"`{ctx.bot.command_prefix}mega https://mega.nz/file/example 192`",
+                f"`{ctx.bot.command_prefix}mega https://mega.nz/file/example 320`"
+            ]
+
+            embed.add_field(
+                name="💡 Examples",
+                value="\n".join(examples),
+                inline=False
+            )
+
+            embed.add_field(
+                name="ℹ️ Parameters",
+                value="• `MEGA_URL` - A valid MEGA download link\n• `bitrate` - Audio quality in kbps (optional, default: 128)",
+                inline=False
+            )
+
+        elif command_info.name == "nai":
+            embed.add_field(
+                name="📝 Usage",
+                value=f"`{ctx.bot.command_prefix}nai <prompt> [options]`",
+                inline=False
+            )
+
+            examples = [
+                f"`{ctx.bot.command_prefix}nai beautiful landscape, mountains, sunset`",
+                f"`{ctx.bot.command_prefix}nai anime girl with blue hair discord`",
+                f"`{ctx.bot.command_prefix}nai fantasy scene size:landscape`",
+                f"`{ctx.bot.command_prefix}nai group scene char1:[elf warrior] char2:[mage]`"
+            ]
+
+            embed.add_field(
+                name="💡 Examples",
+                value="\n".join(examples),
+                inline=False
+            )
+
+            embed.add_field(
+                name="ℹ️ Options",
+                value="• `discord/catbox` - Upload service\n• `size:portrait/landscape/square` - Image dimensions\n• `char1:[desc] char2:[desc]` - Multi-character generation",
+                inline=False
+            )
+
+        elif command_info.name == "auth":
+            embed.add_field(
+                name="📝 Available Subcommands",
+                value=f"`{ctx.bot.command_prefix}auth status` - Show system status\n"
+                      f"`{ctx.bot.command_prefix}auth user <user_id>` - Show user permissions\n"
+                      f"`{ctx.bot.command_prefix}auth add <user_id> <level> [modules...]` - Add user\n"
+                      f"`{ctx.bot.command_prefix}auth remove <user_id>` - Remove user",
+                inline=False
+            )
+
+            embed.add_field(
+                name="💡 Examples",
+                value=f"`{ctx.bot.command_prefix}auth status`\n"
+                      f"`{ctx.bot.command_prefix}auth user 123456789`\n"
+                      f"`{ctx.bot.command_prefix}auth add 123456789 full`\n"
+                      f"`{ctx.bot.command_prefix}auth add 123456789 module mega_download novelai`",
+                inline=False
+            )
+
+            embed.add_field(
+                name="ℹ️ Permission Levels",
+                value="• `admin` - Full admin access\n• `full` - Access to all modules\n• `module` - Access to specific modules\n• `none` - No access",
+                inline=False
+            )
+
+        # Add custom help text if provided
+        if command_info.help_text:
+            embed.add_field(
+                name="📋 Additional Information",
+                value=command_info.help_text,
+                inline=False
+            )
+
+        # Add custom usage examples if provided
+        if command_info.usage_examples:
+            embed.add_field(
+                name="📚 More Examples",
+                value="\n".join(command_info.usage_examples),
+                inline=False
+            )
+
+        embed.set_footer(text="💡 Tip: Use the exact syntax shown in examples for best results")
+        embed.timestamp = discord.utils.utcnow()
+
+        await ctx.reply(embed=embed)
 
     def _wrap_admin_command(self, callback: Callable) -> Callable:
         """
@@ -228,8 +477,22 @@ class CommandRegistry:
                     return
 
                 # Execute the original command
-                await callback(ctx, *args, **kwargs)
+                # Handle both instance methods and regular functions
+                await self._call_command_callback(callback, ctx, *args, **kwargs)
 
+            except TypeError as e:
+                # Handle missing argument errors gracefully for admin commands too
+                if "missing" in str(e) and "required positional argument" in str(e):
+                    # Create a temporary command info for help display
+                    temp_command_info = CommandInfo(
+                        name="auth",
+                        callback=callback,
+                        description="Authorization management commands (admin only)"
+                    )
+                    await self._send_command_help(temp_command_info, ctx)
+                else:
+                    self.logger.error(f"TypeError in admin command: {e}", exc_info=True)
+                    await ctx.reply(f"❌ Invalid arguments provided. Use `!help auth` for usage information.")
             except Exception as e:
                 self.logger.error(f"Error in admin command: {e}", exc_info=True)
                 await ctx.reply(f"❌ An error occurred while executing the command: {str(e)}")
@@ -237,7 +500,7 @@ class CommandRegistry:
         # Preserve function metadata
         wrapped_callback.__name__ = callback.__name__
         wrapped_callback.__doc__ = callback.__doc__
-        
+
         return wrapped_callback
 
     def get_registered_commands(self) -> Dict[str, CommandInfo]:

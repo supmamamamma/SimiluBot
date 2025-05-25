@@ -18,7 +18,7 @@ from similubot.utils.config_manager import ConfigManager
 class MegaCommands:
     """
     MEGA download and conversion command handlers.
-    
+
     Handles MEGA link processing, audio conversion, and file uploading
     with real-time progress tracking and authorization.
     """
@@ -55,11 +55,25 @@ class MegaCommands:
         Args:
             registry: Command registry instance
         """
+        usage_examples = [
+            "!mega https://mega.nz/file/ABC123def456 - Download with default bitrate",
+            "!mega https://mega.nz/file/ABC123def456 192 - Download with 192 kbps quality",
+            "!mega https://mega.nz/file/ABC123def456 320 - Download with high quality (320 kbps)"
+        ]
+
+        help_text = (
+            "Downloads audio/video files from MEGA and converts them to AAC format. "
+            f"Files are uploaded to {self.config.get_mega_upload_service()}. "
+            "Supports automatic file size optimization for CatBox uploads."
+        )
+
         registry.register_command(
             name="mega",
             callback=self.mega_command,
             description="Download a file from MEGA and convert it to AAC",
-            required_permission="mega"
+            required_permission="mega",
+            usage_examples=usage_examples,
+            help_text=help_text
         )
 
         self.logger.debug("MEGA commands registered")
