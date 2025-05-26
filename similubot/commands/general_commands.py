@@ -99,6 +99,17 @@ class GeneralCommands:
                 inline=False
             )
 
+        # Add AI command if available
+        if self.config.is_ai_configured():
+            ai_description = "Interact with AI for conversations and assistance."
+            ai_description += "\nSupports conversation memory and specialized modes."
+            ai_description += f"\nAdd `mode:danbooru` for Danbooru tag generation."
+            embed.add_field(
+                name=f"{ctx.bot.command_prefix}ai <prompt> [mode:danbooru]",
+                value=ai_description,
+                inline=False
+            )
+
         # Automatic MEGA link detection
         embed.add_field(
             name="Automatic MEGA Link Detection",
@@ -188,6 +199,9 @@ class GeneralCommands:
 
             if self.image_generator:
                 core_commands.append(f"`{ctx.bot.command_prefix}nai <prompt>` - Generate AI images")
+
+            if self.config.is_ai_configured():
+                core_commands.append(f"`{ctx.bot.command_prefix}ai <prompt>` - AI conversation and assistance")
 
             core_commands.append(f"`{ctx.bot.command_prefix}about` - Bot information")
             core_commands.append(f"`{ctx.bot.command_prefix}status` - Bot status")

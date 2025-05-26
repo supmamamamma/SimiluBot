@@ -1,8 +1,9 @@
 """Configuration manager for SimiluBot."""
 import logging
 import os
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 import yaml
+from dotenv import load_dotenv
 
 class ConfigManager:
     """
@@ -25,6 +26,9 @@ class ConfigManager:
         self.logger = logging.getLogger("similubot.config")
         self.config_path = config_path
         self.config: Dict[str, Any] = {}
+
+        # Load environment variables from .env file
+        load_dotenv()
 
         self._load_config()
 
@@ -290,3 +294,251 @@ class ConfigManager:
             'n_samples': 1,
             'seed': -1
         })
+
+    # AI Configuration Methods
+    def get_env(self, key: str, default: Any = None) -> Any:
+        """
+        Get an environment variable value.
+
+        Args:
+            key: Environment variable name
+            default: Default value if not found
+
+        Returns:
+            Environment variable value or default
+        """
+        return os.getenv(key, default)
+
+    def is_ai_enabled(self) -> bool:
+        """
+        Check if AI functionality is enabled.
+
+        Returns:
+            True if AI is enabled, False otherwise
+        """
+        return self.get('ai.enabled', True)
+
+    def get_default_ai_provider(self) -> str:
+        """
+        Get the default AI provider.
+
+        Returns:
+            Default AI provider name
+        """
+        return self.get('ai.default_provider', 'openrouter')
+
+    def get_ai_providers(self) -> Dict[str, Dict[str, Any]]:
+        """
+        Get all configured AI providers.
+
+        Returns:
+            Dictionary of provider configurations
+        """
+        return self.get('ai.providers', {})
+
+    def get_ai_provider_config(self, provider: str) -> Dict[str, str]:
+        """
+        Get configuration for a specific AI provider.
+
+        Args:
+            provider: Provider name (dynamically loaded from config)
+
+        Returns:
+            Dictionary with provider configuration
+
+        Raises:
+            ValueError: If provider is not supported or not configured
+        """
+        # Get provider configuration from YAML
+        providers = self.get_ai_providers()
+
+        if provider not in providers:
+            raise ValueError(f"AI provider '{provider}' not found in configuration")
+
+        provider_config = providers[provider]
+
+        # Check if provider is enabled
+        if not provider_config.get('enabled', True):
+            raise ValueError(f"AI provider '{provider}' is disabled")
+
+        # Get credentials from environment variables
+        provider_upper = provider.upper()
+        base_url = self.get_env(f'{provider_upper}_BASE_URL')
+        api_key = self.get_env(f'{provider_upper}_KEY')
+
+        if not base_url or not api_key:
+            raise ValueError(f"AI provider '{provider}' credentials not found in environment variables")
+
+        # Get model from YAML config
+        model = provider_config.get('model')
+        if not model:
+            raise ValueError(f"AI provider '{provider}' model not specified in configuration")
+
+        return {
+            'base_url': base_url,
+            'api_key': api_key,
+            'model': model
+        }
+
+    def get_ai_max_tokens(self) -> int:
+        """
+        Get the maximum tokens for AI responses.
+
+        Returns:
+            Maximum tokens
+        """
+        return self.get('ai.default_parameters.max_tokens', 2048)
+
+    def get_ai_temperature(self) -> float:
+        """
+        Get the AI temperature setting.
+
+        Returns:
+            Temperature value
+        """
+        return self.get('ai.default_parameters.temperature', 0.7)
+
+    def get_ai_conversation_timeout(self) -> int:
+        """
+        Get the conversation timeout in seconds.
+
+        Returns:
+            Timeout in seconds
+        """
+        return self.get('ai.default_parameters.conversation_timeout', 1800)  # 30 minutes
+
+    def get_ai_max_conversation_history(self) -> int:
+        """
+        Get the maximum conversation history length.
+
+        Returns:
+            Maximum number of messages to keep in history
+        """
+        return self.get('ai.default_parameters.max_conversation_history', 10)
+
+    def get_ai_default_system_prompt(self) -> str:
+        """
+        Get the default system prompt for AI conversations.
+
+        Returns:
+            Default system prompt
+        """
+        return self.get(
+            'ai.system_prompts.default',
+            'You are a helpful AI assistant integrated into a Discord bot. '
+            'Provide clear, concise, and helpful responses to user questions and requests.'
+        )
+
+    def get_ai_danbooru_system_prompt(self) -> str:
+        """
+        Get the system prompt for Danbooru tag generation mode.
+
+        Returns:
+            Danbooru system prompt
+        """
+        return self.get(
+            'ai.system_prompts.danbooru',
+            'You are an expert at analyzing image descriptions and converting them into Danbooru-style tags. '
+            'When given a description, respond with a comma-separated list of relevant Danbooru tags that would '
+            'help generate or find similar images. Focus on: character features, clothing, poses, settings, '
+            'art style, and quality tags. Be specific and use established Danbooru tag conventions.'
+        )
+
+    def is_ai_configured(self) -> bool:
+        """
+        Check if AI functionality is properly configured.
+
+        Returns:
+            True if at least one AI provider is configured, False otherwise
+        """
+        if not self.is_ai_enabled():
+            return False
+
+        providers = self.get_ai_providers()
+
+        for provider_name, provider_config in providers.items():
+            if not provider_config.get('enabled', True):
+                continue
+
+            try:
+                self.get_ai_provider_config(provider_name)
+                return True
+            except ValueError:
+                continue
+
+        return False
+
+    def set_ai_provider(self, provider: str) -> bool:
+        """
+        Set the default AI provider.
+
+        Args:
+            provider: Provider name to set as default
+
+        Returns:
+            True if successful, False otherwise
+        """
+        try:
+            # Validate provider exists and is configured
+            self.get_ai_provider_config(provider)
+
+            # Update the configuration
+            self.config['ai']['default_provider'] = provider
+
+            # Save the configuration (would need to implement config saving)
+            # For now, this only updates the in-memory config
+            self.logger.info(f"Default AI provider set to: {provider}")
+            return True
+
+        except (ValueError, KeyError) as e:
+            self.logger.error(f"Failed to set AI provider '{provider}': {e}")
+            return False
+
+    def set_ai_model(self, provider: str, model: str) -> bool:
+        """
+        Set the model for a specific AI provider.
+
+        Args:
+            provider: Provider name
+            model: Model name to set
+
+        Returns:
+            True if successful, False otherwise
+        """
+        try:
+            providers = self.get_ai_providers()
+
+            if provider not in providers:
+                raise ValueError(f"Provider '{provider}' not found")
+
+            # Update the model
+            self.config['ai']['providers'][provider]['model'] = model
+
+            self.logger.info(f"AI provider '{provider}' model set to: {model}")
+            return True
+
+        except (ValueError, KeyError) as e:
+            self.logger.error(f"Failed to set model for provider '{provider}': {e}")
+            return False
+
+    def get_available_ai_providers(self) -> List[str]:
+        """
+        Get list of available AI providers.
+
+        Returns:
+            List of provider names that are enabled and configured
+        """
+        available = []
+        providers = self.get_ai_providers()
+
+        for provider_name, provider_config in providers.items():
+            if not provider_config.get('enabled', True):
+                continue
+
+            try:
+                self.get_ai_provider_config(provider_name)
+                available.append(provider_name)
+            except ValueError:
+                continue
+
+        return available

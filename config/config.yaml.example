@@ -73,6 +73,29 @@ novelai:
     negative_prompt: "blurry, lowres, upscaled, artistic error, film grain, scan artifacts, worst quality, bad quality, jpeg artifacts, very displeasing, chromatic aberration, halftone, multiple views, logo, too many watermarks, negative space, blank page"  # Default negative prompt
   timeout: 120  # API request timeout in seconds
 
+# AI Conversation Configuration
+ai:
+  enabled: true  # Set to false to disable AI functionality
+  default_provider: "openrouter"  # Default AI provider (openrouter, siliconflow, deepseek, or custom)
+  providers:
+    openrouter:
+      model: "anthropic/claude-3.5-sonnet"  # Default model for OpenRouter
+      enabled: true
+    siliconflow:
+      model: "deepseek-ai/deepseek-chat"  # Default model for SiliconFlow
+      enabled: true
+    deepseek:
+      model: "deepseek-chat"  # Default model for DeepSeek
+      enabled: true
+  default_parameters:
+    max_tokens: 2048  # Maximum tokens in AI responses
+    temperature: 0.7  # AI creativity/randomness (0.0-2.0)
+    conversation_timeout: 1800  # Conversation timeout in seconds (30 minutes)
+    max_conversation_history: 10  # Maximum messages to keep in conversation history
+  system_prompts:
+    default: "You are a helpful AI assistant integrated into a Discord bot. Provide clear, concise, and helpful responses to user questions and requests."
+    danbooru: "You are an expert at analyzing image descriptions and converting them into Danbooru-style tags. When given a description, respond with a comma-separated list of relevant Danbooru tags that would help generate or find similar images. Focus on: character features, clothing, poses, settings, art style, and quality tags. Be specific and use established Danbooru tag conventions."
+
 # Logging Configuration
 logging:
   level: "INFO"  # Options: DEBUG, INFO, WARNING, ERROR, CRITICAL

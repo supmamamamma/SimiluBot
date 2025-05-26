@@ -14,6 +14,7 @@ from similubot.commands.mega_commands import MegaCommands
 from similubot.commands.novelai_commands import NovelAICommands
 from similubot.commands.auth_commands import AuthCommands
 from similubot.commands.general_commands import GeneralCommands
+from similubot.commands.ai_commands import AICommands
 
 # Existing modules
 from similubot.downloaders.mega_downloader import MegaDownloader
@@ -29,7 +30,7 @@ from similubot.auth.unauthorized_handler import UnauthorizedAccessHandler
 class SimiluBot:
     """
     Main Discord bot implementation for SimiluBot.
-    
+
     Refactored modular architecture with separation of concerns:
     - Command registry for centralized command management
     - Event handler for Discord events
@@ -59,10 +60,10 @@ class SimiluBot:
 
         # Initialize core components
         self._init_core_modules()
-        
+
         # Initialize command modules
         self._init_command_modules()
-        
+
         # Register commands and events
         self._register_commands()
         self._setup_event_handlers()
@@ -111,7 +112,7 @@ class SimiluBot:
             config_path=self.config.get_auth_config_path(),
             auth_enabled=self.config.is_auth_enabled()
         )
-        
+
         # Initialize unauthorized access handler
         self.unauthorized_handler = UnauthorizedAccessHandler(
             auth_manager=self.auth_manager,
@@ -157,6 +158,11 @@ class SimiluBot:
             image_generator=self.image_generator
         )
 
+        # Initialize AI commands
+        self.ai_commands = AICommands(
+            config=self.config
+        )
+
         self.logger.debug("Command modules initialized")
 
     def _register_commands(self) -> None:
@@ -178,6 +184,12 @@ class SimiluBot:
 
         # Register general commands
         self.general_commands.register_commands(self.command_registry)
+
+        # Register AI commands (if available)
+        if self.ai_commands.is_available():
+            self.ai_commands.register_commands(self.command_registry)
+        else:
+            self.logger.info("AI commands not registered (not configured)")
 
         self.logger.info("All commands registered successfully")
 
@@ -212,10 +224,14 @@ class SimiluBot:
         """Close the Discord bot and clean up resources."""
         try:
             self.logger.info("Shutting down SimiluBot...")
-            
+
+            # Shutdown AI commands if available
+            if hasattr(self, 'ai_commands') and self.ai_commands.is_available():
+                await self.ai_commands.shutdown()
+
             # Send shutdown notification if configured
             # await self.event_handler.send_shutdown_notification(channel_id)
-            
+
             await self.bot.close()
             self.logger.info("SimiluBot shut down successfully")
         except Exception as e:
@@ -249,11 +265,20 @@ class SimiluBot:
             "user_count": sum(guild.member_count or 0 for guild in self.bot.guilds),
             "command_count": len(self.command_registry.get_registered_commands()),
             "authorization_enabled": self.auth_manager.auth_enabled,
-            "novelai_available": self.image_generator is not None
+            "novelai_available": self.image_generator is not None,
+            "ai_available": self.ai_commands.is_available()
         }
 
         if self.auth_manager.auth_enabled:
             stats.update(self.auth_manager.get_stats())
+
+        # Add AI conversation statistics if available
+        if self.ai_commands.is_available() and self.ai_commands.conversation_memory:
+            ai_stats = self.ai_commands.conversation_memory.get_conversation_stats()
+            stats.update({
+                "ai_active_conversations": ai_stats["active_conversations"],
+                "ai_total_messages": ai_stats["total_messages"]
+            })
 
         return stats
 

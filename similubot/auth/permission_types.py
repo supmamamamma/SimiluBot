@@ -16,6 +16,7 @@ class ModulePermission(Enum):
     """Available module permissions."""
     MEGA_DOWNLOAD = "mega_download"     # MEGA link processing and audio conversion
     NOVELAI_GENERATION = "novelai"     # NovelAI image generation
+    AI_CONVERSATION = "ai_conversation" # AI conversation and assistance
     GENERAL_COMMANDS = "general"       # General bot commands (about, help, etc.)
 
 
@@ -99,6 +100,9 @@ COMMAND_MODULE_MAP = {
     # NovelAI commands
     "nai": ModulePermission.NOVELAI_GENERATION,
 
+    # AI conversation commands
+    "ai": ModulePermission.AI_CONVERSATION,
+
     # General commands
     "about": ModulePermission.GENERAL_COMMANDS,
     "help": ModulePermission.GENERAL_COMMANDS,
@@ -134,5 +138,7 @@ def get_feature_module(feature_name: str) -> ModulePermission:
         "audio_conversion": ModulePermission.MEGA_DOWNLOAD,
         "novelai_generation": ModulePermission.NOVELAI_GENERATION,
         "image_generation": ModulePermission.NOVELAI_GENERATION,
+        "ai_conversation": ModulePermission.AI_CONVERSATION,
+        "ai_generation": ModulePermission.AI_CONVERSATION,
     }
     return feature_map.get(feature_name, ModulePermission.GENERAL_COMMANDS)

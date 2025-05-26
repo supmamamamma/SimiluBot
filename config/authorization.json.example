@@ -8,6 +8,7 @@
       "modules": [
         "mega_download",
         "novelai",
+        "ai_conversation",
         "general"
       ],
       "notes": "Example user with full access - replace with actual user ID"
@@ -19,6 +20,15 @@
         "mega_download"
       ],
       "notes": "Example user with MEGA download access only"
+    },
+    {
+      "user_id": "EXAMPLE_USER_ID_555666777",
+      "permission_level": "module",
+      "modules": [
+        "ai_conversation",
+        "general"
+      ],
+      "notes": "Example user with AI conversation access only"
     }
   ]
 }
