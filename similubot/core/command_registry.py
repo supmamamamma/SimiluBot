@@ -94,7 +94,9 @@ class CommandRegistry:
         self,
         name: str,
         description: str,
-        admin_only: bool = True
+        admin_only: bool = True,
+        usage_examples: Optional[List[str]] = None,
+        help_text: Optional[str] = None
     ) -> commands.Group:
         """
         Register a command group with the bot.
@@ -103,18 +105,30 @@ class CommandRegistry:
             name: Group name
             description: Group description
             admin_only: Whether group requires admin privileges
+            usage_examples: List of usage examples for help display
+            help_text: Additional help text for the command group
 
         Returns:
             Discord command group
         """
         async def group_callback(ctx):
-            """Default group callback."""
+            """Default group callback with custom help display."""
             if admin_only and not self.auth_manager.is_admin(ctx.author.id):
                 await ctx.reply("❌ You don't have permission to use these commands.")
                 return
 
-            # Show group help
-            await ctx.send_help(ctx.command)
+            # Create command info for help display
+            command_info = CommandInfo(
+                name=name,
+                callback=group_callback,
+                description=description,
+                admin_only=admin_only,
+                usage_examples=usage_examples,
+                help_text=help_text
+            )
+
+            # Show custom help using our help system
+            await self._send_command_help(command_info, ctx)
 
         # Create wrapped group callback with authorization
         if admin_only:
@@ -424,17 +438,21 @@ class CommandRegistry:
             )
 
             embed.add_field(
-                name="💡 Examples",
-                value=f"`{ctx.bot.command_prefix}auth status`\n"
-                      f"`{ctx.bot.command_prefix}auth user 123456789`\n"
-                      f"`{ctx.bot.command_prefix}auth add 123456789 full`\n"
-                      f"`{ctx.bot.command_prefix}auth add 123456789 module mega_download novelai`",
+                name="ℹ️ Permission Levels",
+                value="• `admin` - Full admin access\n• `full` - Access to all modules\n• `module` - Access to specific modules\n• `none` - No access",
                 inline=False
             )
 
             embed.add_field(
-                name="ℹ️ Permission Levels",
-                value="• `admin` - Full admin access\n• `full` - Access to all modules\n• `module` - Access to specific modules\n• `none` - No access",
+                name="🔧 Available Modules",
+                value="• `mega_download` - MEGA link processing\n• `novelai` - AI image generation\n• `general` - General bot commands",
+                inline=False
+            )
+
+            embed.add_field(
+                name="🔒 Admin Requirements",
+                value="All authorization commands require administrator privileges. "
+                      "Only users listed in the `admin_ids` configuration can use these commands.",
                 inline=False
             )
 

@@ -1,5 +1,5 @@
 {
-  "admin_ids": [],
+  "admin_ids": ["123456789012345678"],
   "notify_admins_on_unauthorized": true,
   "users": [
     {

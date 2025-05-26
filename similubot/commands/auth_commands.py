@@ -34,11 +34,29 @@ class AuthCommands:
         Args:
             registry: Command registry instance
         """
-        # Create auth command group with help information
+        # Define help information for the auth command group
+        usage_examples = [
+            "!auth status - Show authorization system status and statistics",
+            "!auth user 123456789 - Show permissions for a specific user",
+            "!auth add 123456789 full - Grant full access to a user",
+            "!auth add 123456789 module mega_download novelai - Grant specific module access",
+            "!auth remove 123456789 - Remove user from authorization system"
+        ]
+
+        help_text = (
+            "🔐 **Admin-Only Commands** - These commands require administrator privileges.\n\n"
+            "The authorization system controls access to bot features and commands. "
+            "Users can be granted different permission levels and access to specific modules. "
+            "All authorization changes are logged and tracked for security purposes."
+        )
+
+        # Create auth command group with comprehensive help information
         auth_group = registry.register_command_group(
             name="auth",
             description="Authorization management commands (admin only)",
-            admin_only=True
+            admin_only=True,
+            usage_examples=usage_examples,
+            help_text=help_text
         )
 
         # Register subcommands
