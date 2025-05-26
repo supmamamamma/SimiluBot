@@ -22,7 +22,7 @@ A Discord bot that downloads media from MEGA links, converts them to AAC format,
 
 1. Clone the repository:
    ```
-   git clone https://github.com/yourusername/SimiluBot.git
+   git clone https://github.com/Darkatse/SimiluBot.git
    cd SimiluBot
    ```
 
