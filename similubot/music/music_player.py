@@ -3,6 +3,7 @@
 import logging
 import asyncio
 import os
+import time
 from typing import Optional, Dict, Callable, Any
 import discord
 from discord.ext import commands
@@ -41,6 +42,11 @@ class MusicPlayer:
         # Playback state tracking
         self._playback_tasks: Dict[int, asyncio.Task] = {}
         self._current_audio_files: Dict[int, str] = {}
+
+        # Playback timing tracking
+        self._playback_start_times: Dict[int, float] = {}
+        self._playback_paused_times: Dict[int, float] = {}
+        self._total_paused_duration: Dict[int, float] = {}
 
         self.logger.info("Music player initialized")
 
@@ -245,6 +251,91 @@ class MusicPlayer:
 
         return queue_info
 
+    def get_current_playback_position(self, guild_id: int) -> Optional[float]:
+        """
+        Get the current playback position in seconds.
+
+        Args:
+            guild_id: Discord guild ID
+
+        Returns:
+            Current position in seconds, or None if not playing
+        """
+        if guild_id not in self._playback_start_times:
+            return None
+
+        start_time = self._playback_start_times[guild_id]
+        current_time = time.time()
+
+        # Calculate elapsed time
+        elapsed = current_time - start_time
+
+        # Subtract any paused duration
+        total_paused = self._total_paused_duration.get(guild_id, 0.0)
+
+        # If currently paused, add the current pause duration
+        if guild_id in self._playback_paused_times:
+            current_pause_duration = current_time - self._playback_paused_times[guild_id]
+            total_paused += current_pause_duration
+
+        return max(0.0, elapsed - total_paused)
+
+    def _start_playback_timing(self, guild_id: int) -> None:
+        """
+        Start tracking playback timing for a guild.
+
+        Args:
+            guild_id: Discord guild ID
+        """
+        self._playback_start_times[guild_id] = time.time()
+        self._total_paused_duration[guild_id] = 0.0
+
+        # Clear any existing pause state
+        if guild_id in self._playback_paused_times:
+            del self._playback_paused_times[guild_id]
+
+    def _pause_playback_timing(self, guild_id: int) -> None:
+        """
+        Mark playback as paused for timing calculations.
+
+        Args:
+            guild_id: Discord guild ID
+        """
+        if guild_id in self._playback_start_times and guild_id not in self._playback_paused_times:
+            self._playback_paused_times[guild_id] = time.time()
+
+    def _resume_playback_timing(self, guild_id: int) -> None:
+        """
+        Resume playback timing after a pause.
+
+        Args:
+            guild_id: Discord guild ID
+        """
+        if guild_id in self._playback_paused_times:
+            pause_start = self._playback_paused_times[guild_id]
+            pause_duration = time.time() - pause_start
+
+            # Add to total paused duration
+            self._total_paused_duration[guild_id] = self._total_paused_duration.get(guild_id, 0.0) + pause_duration
+
+            # Remove from paused state
+            del self._playback_paused_times[guild_id]
+
+    def _stop_playback_timing(self, guild_id: int) -> None:
+        """
+        Stop tracking playback timing for a guild.
+
+        Args:
+            guild_id: Discord guild ID
+        """
+        # Clean up timing state
+        if guild_id in self._playback_start_times:
+            del self._playback_start_times[guild_id]
+        if guild_id in self._playback_paused_times:
+            del self._playback_paused_times[guild_id]
+        if guild_id in self._total_paused_duration:
+            del self._total_paused_duration[guild_id]
+
     async def _start_playback(
         self,
         guild_id: int,
@@ -321,10 +412,16 @@ class MusicPlayer:
                     await self._cleanup_current_audio(guild_id)
                     continue
 
+                # Start timing tracking
+                self._start_playback_timing(guild_id)
+
                 self.logger.info(f"Now playing: {song.title}")
 
                 # Wait for playback to finish
                 await playback_finished.wait()
+
+                # Stop timing tracking
+                self._stop_playback_timing(guild_id)
 
                 # Clean up audio file
                 await self._cleanup_current_audio(guild_id)
@@ -374,3 +471,8 @@ class MusicPlayer:
         self._playback_tasks.clear()
         self._current_audio_files.clear()
         self._queue_managers.clear()
+
+        # Clear timing state
+        self._playback_start_times.clear()
+        self._playback_paused_times.clear()
+        self._total_paused_duration.clear()

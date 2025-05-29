@@ -1,0 +1,311 @@
+"""Real-time progress bar for music playback."""
+
+import asyncio
+import logging
+import time
+from typing import Optional, Dict, Any
+import discord
+
+from .music_player import MusicPlayer
+from .queue_manager import Song
+
+
+class MusicProgressBar:
+    """
+    Real-time progress bar for music playback.
+    
+    Creates and maintains an elegant Discord embed with a visual progress bar
+    that updates every 5 seconds to show current playback position.
+    """
+
+    def __init__(self, music_player: MusicPlayer):
+        """
+        Initialize the progress bar.
+        
+        Args:
+            music_player: Music player instance
+        """
+        self.logger = logging.getLogger("similubot.music.progress_bar")
+        self.music_player = music_player
+        
+        # Active progress bar tracking
+        self._active_progress_bars: Dict[int, asyncio.Task] = {}
+
+    def create_progress_bar(self, current_seconds: float, total_seconds: float, bar_length: int = 12) -> str:
+        """
+        Create a visual progress bar using Unicode characters.
+        
+        Args:
+            current_seconds: Current playback position in seconds
+            total_seconds: Total song duration in seconds
+            bar_length: Length of the progress bar in characters
+            
+        Returns:
+            Unicode progress bar string
+        """
+        if total_seconds <= 0:
+            return "▬" * bar_length
+        
+        # Calculate progress percentage
+        progress = min(current_seconds / total_seconds, 1.0)
+        
+        # Calculate position of the progress indicator
+        filled_length = int(progress * bar_length)
+        
+        # Create the progress bar
+        if filled_length == 0:
+            # At the beginning
+            bar = "🔘" + "▬" * (bar_length - 1)
+        elif filled_length >= bar_length:
+            # At the end
+            bar = "▬" * (bar_length - 1) + "🔘"
+        else:
+            # In the middle
+            bar = "▬" * filled_length + "🔘" + "▬" * (bar_length - filled_length - 1)
+        
+        return bar
+
+    def format_time(self, seconds: float) -> str:
+        """
+        Format time in seconds to MM:SS or HH:MM:SS format.
+        
+        Args:
+            seconds: Time in seconds
+            
+        Returns:
+            Formatted time string
+        """
+        seconds = int(seconds)
+        
+        if seconds < 3600:  # Less than 1 hour
+            minutes, secs = divmod(seconds, 60)
+            return f"{minutes:02d}:{secs:02d}"
+        else:  # 1 hour or more
+            hours, remainder = divmod(seconds, 3600)
+            minutes, secs = divmod(remainder, 60)
+            return f"{hours:02d}:{minutes:02d}:{secs:02d}"
+
+    def get_playback_status_icon(self, guild_id: int) -> str:
+        """
+        Get the appropriate playback status icon.
+        
+        Args:
+            guild_id: Discord guild ID
+            
+        Returns:
+            Status icon (▶, ⏸, ⏹)
+        """
+        if self.music_player.voice_manager.is_playing(guild_id):
+            return "▶"
+        elif self.music_player.voice_manager.is_paused(guild_id):
+            return "⏸"
+        else:
+            return "⏹"
+
+    def create_progress_embed(self, guild_id: int, song: Song) -> Optional[discord.Embed]:
+        """
+        Create a Discord embed with the current progress bar.
+        
+        Args:
+            guild_id: Discord guild ID
+            song: Current song
+            
+        Returns:
+            Discord embed with progress bar, or None if not playing
+        """
+        try:
+            # Get current playback position
+            current_position = self.music_player.get_current_playback_position(guild_id)
+            if current_position is None:
+                return None
+            
+            # Get playback status
+            status_icon = self.get_playback_status_icon(guild_id)
+            
+            # Create progress bar
+            progress_bar = self.create_progress_bar(current_position, song.duration)
+            
+            # Format times
+            current_time = self.format_time(current_position)
+            total_time = self.format_time(song.duration)
+            
+            # Create embed
+            embed = discord.Embed(
+                title="🎵 Now Playing",
+                color=discord.Color.green()
+            )
+            
+            # Song title and artist
+            embed.add_field(
+                name="Track",
+                value=f"**{song.title}**",
+                inline=False
+            )
+            
+            # Progress bar with time
+            progress_text = f"{status_icon} {progress_bar} [{current_time}/{total_time}] 🔊"
+            embed.add_field(
+                name="Progress",
+                value=progress_text,
+                inline=False
+            )
+            
+            # Additional info
+            embed.add_field(
+                name="Artist",
+                value=song.uploader,
+                inline=True
+            )
+            
+            embed.add_field(
+                name="Requested by",
+                value=song.requester.display_name,
+                inline=True
+            )
+            
+            # Add thumbnail if available
+            if song.audio_info.thumbnail_url:
+                embed.set_thumbnail(url=song.audio_info.thumbnail_url)
+            
+            # Add timestamp
+            embed.timestamp = discord.utils.utcnow()
+            
+            return embed
+            
+        except Exception as e:
+            self.logger.error(f"Error creating progress embed: {e}", exc_info=True)
+            return None
+
+    async def start_progress_updates(
+        self, 
+        message: discord.Message, 
+        guild_id: int, 
+        song: Song,
+        update_interval: float = 5.0
+    ) -> None:
+        """
+        Start real-time progress bar updates for a message.
+        
+        Args:
+            message: Discord message to update
+            guild_id: Discord guild ID
+            song: Current song
+            update_interval: Update interval in seconds
+        """
+        try:
+            self.logger.info(f"Starting progress updates for guild {guild_id}")
+            
+            update_count = 0
+            max_updates = 120  # Maximum 10 minutes of updates (120 * 5 seconds)
+            
+            while update_count < max_updates:
+                # Check if song is still playing
+                current_song = await self.music_player.get_queue_manager(guild_id).get_current_song()
+                if not current_song or current_song.url != song.url:
+                    self.logger.debug(f"Song changed or stopped, ending progress updates for guild {guild_id}")
+                    break
+                
+                # Check if voice client is still connected and playing
+                if not self.music_player.voice_manager.is_connected(guild_id):
+                    self.logger.debug(f"Voice client disconnected, ending progress updates for guild {guild_id}")
+                    break
+                
+                # Create updated embed
+                embed = self.create_progress_embed(guild_id, song)
+                if not embed:
+                    self.logger.debug(f"Could not create progress embed, ending updates for guild {guild_id}")
+                    break
+                
+                # Update the message
+                try:
+                    await message.edit(embed=embed)
+                    self.logger.debug(f"Updated progress bar for guild {guild_id} (update #{update_count + 1})")
+                except discord.NotFound:
+                    self.logger.debug(f"Message deleted, ending progress updates for guild {guild_id}")
+                    break
+                except discord.HTTPException as e:
+                    if e.status == 429:  # Rate limited
+                        self.logger.warning(f"Rate limited, slowing down updates for guild {guild_id}")
+                        await asyncio.sleep(10)  # Wait longer if rate limited
+                    else:
+                        self.logger.error(f"HTTP error updating progress: {e}")
+                        break
+                
+                # Wait for next update
+                await asyncio.sleep(update_interval)
+                update_count += 1
+            
+            self.logger.info(f"Progress updates ended for guild {guild_id} after {update_count} updates")
+            
+        except asyncio.CancelledError:
+            self.logger.debug(f"Progress updates cancelled for guild {guild_id}")
+        except Exception as e:
+            self.logger.error(f"Error in progress updates for guild {guild_id}: {e}", exc_info=True)
+        finally:
+            # Clean up
+            if guild_id in self._active_progress_bars:
+                del self._active_progress_bars[guild_id]
+
+    async def show_progress_bar(self, message: discord.Message, guild_id: int) -> bool:
+        """
+        Show a real-time progress bar for the current song.
+        
+        Args:
+            message: Discord message to update with progress bar
+            guild_id: Discord guild ID
+            
+        Returns:
+            True if progress bar started successfully, False otherwise
+        """
+        try:
+            # Get current song
+            current_song = await self.music_player.get_queue_manager(guild_id).get_current_song()
+            if not current_song:
+                return False
+            
+            # Check if already showing progress for this guild
+            if guild_id in self._active_progress_bars:
+                # Cancel existing progress updates
+                self._active_progress_bars[guild_id].cancel()
+                del self._active_progress_bars[guild_id]
+            
+            # Create initial embed
+            embed = self.create_progress_embed(guild_id, current_song)
+            if not embed:
+                return False
+            
+            # Update message with initial progress
+            await message.edit(content=None, embed=embed)
+            
+            # Start progress updates
+            task = asyncio.create_task(
+                self.start_progress_updates(message, guild_id, current_song)
+            )
+            self._active_progress_bars[guild_id] = task
+            
+            return True
+            
+        except Exception as e:
+            self.logger.error(f"Error showing progress bar for guild {guild_id}: {e}", exc_info=True)
+            return False
+
+    def stop_progress_updates(self, guild_id: int) -> None:
+        """
+        Stop progress updates for a guild.
+        
+        Args:
+            guild_id: Discord guild ID
+        """
+        if guild_id in self._active_progress_bars:
+            self._active_progress_bars[guild_id].cancel()
+            del self._active_progress_bars[guild_id]
+            self.logger.debug(f"Stopped progress updates for guild {guild_id}")
+
+    async def cleanup_all_progress_bars(self) -> None:
+        """Clean up all active progress bars."""
+        self.logger.info("Cleaning up all progress bars")
+        
+        for guild_id in list(self._active_progress_bars.keys()):
+            self.stop_progress_updates(guild_id)
+        
+        self._active_progress_bars.clear()

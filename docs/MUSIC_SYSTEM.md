@@ -11,12 +11,13 @@ The SimiluBot music system provides comprehensive YouTube audio playback functio
 - **Queue Management**: Multi-song queue with position tracking and metadata
 - **Voice Channel Integration**: Automatic connection and playback management
 - **Progress Tracking**: Real-time download and playback progress updates
+- **Real-time Progress Bar**: Visual progress bar with automatic updates every 5 seconds
 - **Authorization Integration**: Seamless integration with existing permission system
 
 ### Command Set
 - `!music <youtube_url>` - Add song to queue and start playback
 - `!music queue` - Display current queue with song details
-- `!music now` - Show current song with progress information
+- `!music now` - Show real-time progress bar with current playback position
 - `!music skip` - Skip to next song in queue
 - `!music stop` - Stop playback and clear queue, disconnect from voice
 - `!music jump <number>` - Jump to specific position in queue (1-indexed)
@@ -30,7 +31,8 @@ similubot/music/
 ├── youtube_client.py        # YouTube audio extraction
 ├── queue_manager.py         # Song queue management
 ├── voice_manager.py         # Discord voice connections
-└── music_player.py          # Core orchestration
+├── music_player.py          # Core orchestration
+└── progress_bar.py          # Real-time progress bar
 
 similubot/commands/
 └── music_commands.py        # Discord command handlers
@@ -60,7 +62,15 @@ similubot/commands/
 - Orchestrates all components
 - Manages playback loops per guild
 - Handles audio file lifecycle
+- Tracks playback timing and position
 - Provides unified API for commands
+
+#### MusicProgressBar
+- Creates visual progress bars with Unicode characters
+- Provides real-time updates every 5 seconds
+- Calculates current playback position
+- Shows play/pause/stop status indicators
+- Handles Discord API rate limiting gracefully
 
 #### MusicCommands
 - Discord command interface
@@ -124,7 +134,7 @@ Bot: 🎵 Music Queue
      🎶 Now Playing
      **Never Gonna Give You Up**
      Duration: 03:32 | Requested by: User123
-     
+
      📋 Up Next
      1. Another Song - 04:15 | Requested by: User456
      2. Third Song - 02:45 | Requested by: User789
@@ -136,6 +146,27 @@ User: !music jump 3
 Bot: ⏭️ Jumped to Song
      Now playing: **Third Song**
 ```
+
+### Real-time Progress Bar
+```
+User: !music now
+Bot: 🎵 Now Playing
+     Track: **Never Gonna Give You Up**
+
+     Progress: ▶ ▬▬▬▬▬▬🔘▬▬▬▬▬ [1:45/3:32] 🔊
+
+     Artist: Rick Astley
+     Requested by: User123
+
+     [Updates automatically every 5 seconds]
+```
+
+The progress bar features:
+- **Visual Progress**: Unicode progress bar with position indicator (🔘)
+- **Status Icons**: ▶ (playing), ⏸ (paused), ⏹ (stopped)
+- **Time Display**: Current position / Total duration in MM:SS or HH:MM:SS format
+- **Auto Updates**: Refreshes every 5 seconds while song is playing
+- **Smart Cleanup**: Stops updating when song ends or user navigates away
 
 ## Error Handling
 

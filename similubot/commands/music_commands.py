@@ -8,6 +8,7 @@ from discord.ext import commands
 
 from similubot.core.command_registry import CommandRegistry
 from similubot.music.music_player import MusicPlayer
+from similubot.music.progress_bar import MusicProgressBar
 from similubot.progress.discord_updater import DiscordProgressUpdater
 from similubot.utils.config_manager import ConfigManager
 
@@ -31,6 +32,9 @@ class MusicCommands:
         self.logger = logging.getLogger("similubot.commands.music")
         self.config = config
         self.music_player = music_player
+
+        # Initialize progress bar
+        self.progress_bar = MusicProgressBar(music_player)
 
         # Check if music functionality is enabled
         self._enabled = config.get('music.enabled', True)
@@ -283,12 +287,17 @@ class MusicCommands:
 
     async def _handle_now_command(self, ctx: commands.Context) -> None:
         """
-        Handle now playing command.
+        Handle now playing command with real-time progress bar.
 
         Args:
             ctx: Discord command context
         """
         try:
+            # Check if guild exists
+            if not ctx.guild:
+                await ctx.reply("❌ This command can only be used in a server")
+                return
+
             queue_info = await self.music_player.get_queue_info(ctx.guild.id)
             current_song = queue_info.get("current_song")
 
@@ -296,53 +305,61 @@ class MusicCommands:
                 await ctx.reply("❌ No song is currently playing")
                 return
 
-            embed = discord.Embed(
-                title="🎶 Now Playing",
-                color=discord.Color.green()
-            )
+            # Send initial response
+            response = await ctx.reply("🔄 Loading progress bar...")
 
-            embed.add_field(
-                name="Title",
-                value=current_song.title,
-                inline=False
-            )
+            # Start real-time progress bar
+            success = await self.progress_bar.show_progress_bar(response, ctx.guild.id)
 
-            embed.add_field(
-                name="Duration",
-                value=self.music_player.youtube_client.format_duration(current_song.duration),
-                inline=True
-            )
-
-            embed.add_field(
-                name="Uploader",
-                value=current_song.uploader,
-                inline=True
-            )
-
-            embed.add_field(
-                name="Requested by",
-                value=current_song.requester.display_name,
-                inline=True
-            )
-
-            # Add progress bar (simplified version)
-            if queue_info["playing"]:
-                embed.add_field(
-                    name="Status",
-                    value="▶️ Playing",
-                    inline=True
+            if not success:
+                # Fallback to static display
+                embed = discord.Embed(
+                    title="🎶 Now Playing",
+                    color=discord.Color.green()
                 )
-            elif queue_info["paused"]:
+
                 embed.add_field(
-                    name="Status",
-                    value="⏸️ Paused",
+                    name="Title",
+                    value=current_song.title,
+                    inline=False
+                )
+
+                embed.add_field(
+                    name="Duration",
+                    value=self.music_player.youtube_client.format_duration(current_song.duration),
                     inline=True
                 )
 
-            if current_song.audio_info.thumbnail_url:
-                embed.set_thumbnail(url=current_song.audio_info.thumbnail_url)
+                embed.add_field(
+                    name="Uploader",
+                    value=current_song.uploader,
+                    inline=True
+                )
 
-            await ctx.reply(embed=embed)
+                embed.add_field(
+                    name="Requested by",
+                    value=current_song.requester.display_name,
+                    inline=True
+                )
+
+                # Add static status
+                if queue_info["playing"]:
+                    embed.add_field(
+                        name="Status",
+                        value="▶️ Playing",
+                        inline=True
+                    )
+                elif queue_info["paused"]:
+                    embed.add_field(
+                        name="Status",
+                        value="⏸️ Paused",
+                        inline=True
+                    )
+
+                if current_song.audio_info.thumbnail_url:
+                    embed.set_thumbnail(url=current_song.audio_info.thumbnail_url)
+
+                await response.edit(content=None, embed=embed)
 
         except Exception as e:
             self.logger.error(f"Error in now command: {e}", exc_info=True)
@@ -356,6 +373,14 @@ class MusicCommands:
             ctx: Discord command context
         """
         try:
+            # Check if guild exists
+            if not ctx.guild:
+                await ctx.reply("❌ This command can only be used in a server")
+                return
+
+            # Stop any active progress bars
+            self.progress_bar.stop_progress_updates(ctx.guild.id)
+
             success, skipped_title, error = await self.music_player.skip_current_song(ctx.guild.id)
 
             if not success:
@@ -382,6 +407,14 @@ class MusicCommands:
             ctx: Discord command context
         """
         try:
+            # Check if guild exists
+            if not ctx.guild:
+                await ctx.reply("❌ This command can only be used in a server")
+                return
+
+            # Stop any active progress bars
+            self.progress_bar.stop_progress_updates(ctx.guild.id)
+
             success, error = await self.music_player.stop_playback(ctx.guild.id)
 
             if not success:
@@ -413,10 +446,18 @@ class MusicCommands:
             return
 
         try:
+            # Check if guild exists
+            if not ctx.guild:
+                await ctx.reply("❌ This command can only be used in a server")
+                return
+
             position = int(args[0])
             if position < 1:
                 await ctx.reply("❌ Queue position must be 1 or greater")
                 return
+
+            # Stop any active progress bars
+            self.progress_bar.stop_progress_updates(ctx.guild.id)
 
             success, song_title, error = await self.music_player.jump_to_position(
                 ctx.guild.id, position
@@ -497,3 +538,9 @@ class MusicCommands:
         )
 
         await message.edit(content=None, embed=embed)
+
+    async def cleanup(self) -> None:
+        """Clean up music commands resources."""
+        if hasattr(self, 'progress_bar'):
+            await self.progress_bar.cleanup_all_progress_bars()
+            self.logger.debug("Music commands cleanup completed")

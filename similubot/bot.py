@@ -249,6 +249,10 @@ class SimiluBot:
             if hasattr(self, 'ai_commands') and self.ai_commands.is_available():
                 await self.ai_commands.shutdown()
 
+            # Cleanup music commands if available
+            if hasattr(self, 'music_commands'):
+                await self.music_commands.cleanup()
+
             # Cleanup music player if available
             if hasattr(self, 'music_player'):
                 await self.music_player.cleanup_all()
