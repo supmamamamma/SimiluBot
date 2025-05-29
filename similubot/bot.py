@@ -15,6 +15,7 @@ from similubot.commands.novelai_commands import NovelAICommands
 from similubot.commands.auth_commands import AuthCommands
 from similubot.commands.general_commands import GeneralCommands
 from similubot.commands.ai_commands import AICommands
+from similubot.commands.music_commands import MusicCommands
 
 # Existing modules
 from similubot.downloaders.mega_downloader import MegaDownloader
@@ -22,6 +23,7 @@ from similubot.converters.audio_converter import AudioConverter
 from similubot.uploaders.catbox_uploader import CatboxUploader
 from similubot.uploaders.discord_uploader import DiscordUploader
 from similubot.generators.image_generator import ImageGenerator
+from similubot.music.music_player import MusicPlayer
 from similubot.utils.config_manager import ConfigManager
 from similubot.auth.authorization_manager import AuthorizationManager
 from similubot.auth.unauthorized_handler import UnauthorizedAccessHandler
@@ -119,6 +121,12 @@ class SimiluBot:
             bot=self.bot
         )
 
+        # Initialize music player
+        self.music_player = MusicPlayer(
+            bot=self.bot,
+            temp_dir=temp_dir
+        )
+
         # Initialize command registry
         self.command_registry = CommandRegistry(
             bot=self.bot,
@@ -163,6 +171,12 @@ class SimiluBot:
             config=self.config
         )
 
+        # Initialize music commands
+        self.music_commands = MusicCommands(
+            config=self.config,
+            music_player=self.music_player
+        )
+
         self.logger.debug("Command modules initialized")
 
     def _register_commands(self) -> None:
@@ -190,6 +204,12 @@ class SimiluBot:
             self.ai_commands.register_commands(self.command_registry)
         else:
             self.logger.info("AI commands not registered (not configured)")
+
+        # Register music commands (if available)
+        if self.music_commands.is_available():
+            self.music_commands.register_commands(self.command_registry)
+        else:
+            self.logger.info("Music commands not registered (disabled)")
 
         self.logger.info("All commands registered successfully")
 
@@ -228,6 +248,10 @@ class SimiluBot:
             # Shutdown AI commands if available
             if hasattr(self, 'ai_commands') and self.ai_commands.is_available():
                 await self.ai_commands.shutdown()
+
+            # Cleanup music player if available
+            if hasattr(self, 'music_player'):
+                await self.music_player.cleanup_all()
 
             # Send shutdown notification if configured
             # await self.event_handler.send_shutdown_notification(channel_id)

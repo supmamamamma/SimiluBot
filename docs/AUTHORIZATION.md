@@ -23,6 +23,7 @@ The authorization system consists of three main components:
 
 - **`mega_download`** - MEGA link processing and audio conversion
 - **`novelai`** - NovelAI image generation
+- **`music_playback`** - Music playback and queue management
 - **`general`** - General bot commands (about, help, etc.)
 
 ## Configuration
@@ -107,6 +108,7 @@ Shows detailed permissions for a specific user.
 **Available Modules:**
 - `mega_download` - MEGA link processing
 - `novelai` - NovelAI image generation
+- `music_playback` - Music playback and queue management
 - `general` - General commands
 
 ### Remove User
@@ -123,6 +125,7 @@ Removes a user from the authorization system.
 
 - **`!mega`** - Requires `mega_download` module permission
 - **`!nai`** - Requires `novelai` module permission
+- **`!music`** - Requires `music_playback` module permission
 - **`!about`** - Requires `general` module permission (usually granted to all users)
 
 ### Automatic Features
@@ -269,7 +272,7 @@ get_user_permissions(user_id: str) -> Optional[UserPermissions]
 ```python
 # Permission levels
 PermissionLevel.NONE
-PermissionLevel.MODULE  
+PermissionLevel.MODULE
 PermissionLevel.FULL
 PermissionLevel.ADMIN
 

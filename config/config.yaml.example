@@ -96,6 +96,17 @@ ai:
     default: "You are a helpful AI assistant integrated into a Discord bot. Provide clear, concise, and helpful responses to user questions and requests."
     danbooru: "You are an expert at analyzing image descriptions and converting them into Danbooru-style tags. When given a description, respond with a comma-separated list of relevant Danbooru tags that would help generate or find similar images. Focus on: character features, clothing, poses, settings, art style, and quality tags. Be specific and use established Danbooru tag conventions."
 
+# Music Playback Configuration
+music:
+  enabled: true  # Set to false to disable music functionality
+  max_queue_size: 100  # Maximum number of songs in queue per guild
+  max_song_duration: 3600  # Maximum song duration in seconds (1 hour)
+  auto_disconnect_timeout: 300  # Auto-disconnect after inactivity in seconds (5 minutes)
+  volume: 0.5  # Default playback volume (0.0-1.0)
+  ffmpeg_options:
+    before: "-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5"  # FFmpeg options before input
+    options: "-vn"  # FFmpeg options (no video)
+
 # Logging Configuration
 logging:
   level: "INFO"  # Options: DEBUG, INFO, WARNING, ERROR, CRITICAL
