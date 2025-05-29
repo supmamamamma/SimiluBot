@@ -94,7 +94,7 @@ class MusicCommands:
             await self._show_music_help(ctx)
             return
 
-        subcommand = args[0].lower()
+        subcommand = args[0]
         
         if subcommand in ["queue", "q"]:
             await self._handle_queue_command(ctx)
