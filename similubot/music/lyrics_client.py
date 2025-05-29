@@ -47,16 +47,16 @@ class NetEaseCloudMusicClient:
         Returns:
             Song ID as string, or None if not found
         """
+        # Clean up the song title first
+        cleaned_title = self._clean_search_query(song_title)
+
+        # Construct search query with smart artist handling
+        if artist:
+            search_query = self._construct_search_query(cleaned_title, artist)
+        else:
+            search_query = cleaned_title
+
         try:
-            # Clean up the song title first
-            cleaned_title = self._clean_search_query(song_title)
-
-            # Construct search query with smart artist handling
-            if artist:
-                search_query = self._construct_search_query(cleaned_title, artist)
-            else:
-                search_query = cleaned_title
-
             self.logger.debug(f"Searching NetEase for: {search_query}")
 
             # Search parameters
@@ -76,18 +76,33 @@ class NetEaseCloudMusicClient:
                         self.logger.warning(f"NetEase search API returned status {response.status}")
                         return None
 
-                    # Handle different content types
+                    # Handle different content types robustly
+                    data = None
+
+                    # First, check the content type
+                    content_type = response.headers.get('content-type', '').lower()
+                    self.logger.debug(f"Response content-type: {content_type}")
+
+                    # Try to get the response text first
                     try:
-                        data = await response.json()
-                    except Exception as e:
-                        self.logger.warning(f"Failed to parse JSON response: {e}")
-                        # Try to parse as text and then JSON
                         text_response = await response.text()
+                        self.logger.debug(f"Response text length: {len(text_response)}")
+                    except Exception as e:
+                        self.logger.error(f"Failed to read response text: {e}")
+                        return None
+
+                    # Try to parse as JSON regardless of content-type
+                    if text_response.strip():
                         try:
                             data = json.loads(text_response)
-                        except json.JSONDecodeError:
-                            self.logger.warning(f"Response is not valid JSON: {text_response[:200]}...")
+                            self.logger.debug("Successfully parsed response as JSON")
+                        except json.JSONDecodeError as e:
+                            self.logger.warning(f"Response is not valid JSON: {e}")
+                            self.logger.debug(f"Response content (first 300 chars): {text_response[:300]}...")
                             return None
+                    else:
+                        self.logger.warning("Received empty response")
+                        return None
 
                     # Check if we have results
                     if not data.get('result') or not data['result'].get('songs'):
@@ -135,18 +150,33 @@ class NetEaseCloudMusicClient:
                         self.logger.warning(f"Lyrics API returned status {response.status}")
                         return None
 
-                    # Handle different content types
+                    # Handle different content types robustly
+                    data = None
+
+                    # First, check the content type
+                    content_type = response.headers.get('content-type', '').lower()
+                    self.logger.debug(f"Lyrics API content-type: {content_type}")
+
+                    # Try to get the response text first
                     try:
-                        data = await response.json()
-                    except Exception as e:
-                        self.logger.debug(f"Failed to parse JSON response: {e}")
-                        # Try to parse as text and then JSON
                         text_response = await response.text()
+                        self.logger.debug(f"Lyrics response text length: {len(text_response)}")
+                    except Exception as e:
+                        self.logger.error(f"Failed to read lyrics response text: {e}")
+                        return None
+
+                    # Try to parse as JSON regardless of content-type
+                    if text_response.strip():
                         try:
                             data = json.loads(text_response)
-                        except json.JSONDecodeError:
-                            self.logger.warning(f"Response is not valid JSON: {text_response[:200]}...")
+                            self.logger.debug("Successfully parsed lyrics response as JSON")
+                        except json.JSONDecodeError as e:
+                            self.logger.warning(f"Lyrics response is not valid JSON: {e}")
+                            self.logger.debug(f"Lyrics response content (first 300 chars): {text_response[:300]}...")
                             return None
+                    else:
+                        self.logger.warning("Received empty lyrics response")
+                        return None
 
                     # Check if the response is valid
                     if not data.get('served', False):
@@ -329,7 +359,7 @@ class NetEaseCloudMusicClient:
                 return title_clean
 
         # Construct the search query with artist
-        search_query = f"{artist_clean} - {title_clean}"
+        search_query = f"{title_clean} - {artist_clean}"
 
         self.logger.debug(f"Constructed search query: '{search_query}' from artist: '{artist_clean}' and title: '{title_clean}'")
         return search_query

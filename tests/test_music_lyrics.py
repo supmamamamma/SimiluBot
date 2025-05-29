@@ -29,10 +29,14 @@ class TestLyricsClient:
             "served": True
         }
 
+        import json
+        mock_response_text = json.dumps(mock_response_data)
+
         with patch('aiohttp.ClientSession.get') as mock_get:
             mock_response = AsyncMock()
             mock_response.status = 200
-            mock_response.json.return_value = mock_response_data
+            mock_response.headers = {'content-type': 'text/json;charset=utf-8'}
+            mock_response.text.return_value = mock_response_text
             mock_get.return_value.__aenter__.return_value = mock_response
 
             result = await client.get_lyrics("18520488")
@@ -48,10 +52,14 @@ class TestLyricsClient:
         """Test lyrics fetching when not served."""
         mock_response_data = {"served": False}
 
+        import json
+        mock_response_text = json.dumps(mock_response_data)
+
         with patch('aiohttp.ClientSession.get') as mock_get:
             mock_response = AsyncMock()
             mock_response.status = 200
-            mock_response.json.return_value = mock_response_data
+            mock_response.headers = {'content-type': 'text/json;charset=utf-8'}
+            mock_response.text.return_value = mock_response_text
             mock_get.return_value.__aenter__.return_value = mock_response
 
             result = await client.get_lyrics("invalid_id")
