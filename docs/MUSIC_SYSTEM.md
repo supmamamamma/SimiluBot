@@ -31,8 +31,10 @@ similubot/music/
 ├── youtube_client.py        # YouTube audio extraction
 ├── queue_manager.py         # Song queue management
 ├── voice_manager.py         # Discord voice connections
-├── music_player.py          # Core orchestration
-└── progress_bar.py          # Real-time progress bar
+└── music_player.py          # Core orchestration
+
+similubot/progress/
+├── music_progress.py        # Music progress tracking and real-time progress bar
 
 similubot/commands/
 └── music_commands.py        # Discord command handlers
@@ -65,12 +67,19 @@ similubot/commands/
 - Tracks playback timing and position
 - Provides unified API for commands
 
-#### MusicProgressBar
+#### MusicProgressTracker (similubot/progress/music_progress.py)
+- Extends base ProgressTracker for music-specific progress tracking
+- Tracks playback timing with pause/resume state management
+- Provides accurate playback position calculation
+- Integrates with existing progress tracking architecture
+
+#### MusicProgressUpdater (similubot/progress/music_progress.py)
 - Creates visual progress bars with Unicode characters
-- Provides real-time updates every 5 seconds
-- Calculates current playback position
+- Provides real-time Discord embed updates every 5 seconds
+- Calculates current playback position from timing data
 - Shows play/pause/stop status indicators
 - Handles Discord API rate limiting gracefully
+- Follows established progress module patterns
 
 #### MusicCommands
 - Discord command interface

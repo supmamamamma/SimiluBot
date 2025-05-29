@@ -4,13 +4,11 @@ from .youtube_client import YouTubeClient
 from .queue_manager import QueueManager, Song
 from .voice_manager import VoiceManager
 from .music_player import MusicPlayer
-from .progress_bar import MusicProgressBar
 
 __all__ = [
     "YouTubeClient",
     "QueueManager",
     "Song",
     "VoiceManager",
-    "MusicPlayer",
-    "MusicProgressBar"
+    "MusicPlayer"
 ]

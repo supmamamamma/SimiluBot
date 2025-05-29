@@ -8,8 +8,8 @@ from discord.ext import commands
 
 from similubot.core.command_registry import CommandRegistry
 from similubot.music.music_player import MusicPlayer
-from similubot.music.progress_bar import MusicProgressBar
 from similubot.progress.discord_updater import DiscordProgressUpdater
+from similubot.progress.music_progress import MusicProgressBar
 from similubot.utils.config_manager import ConfigManager
 
 

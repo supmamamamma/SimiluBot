@@ -5,13 +5,17 @@ from .mega_tracker import MegaProgressTracker
 from .ffmpeg_tracker import FFmpegProgressTracker
 from .upload_tracker import UploadProgressTracker
 from .discord_updater import DiscordProgressUpdater
+from .music_progress import MusicProgressTracker, MusicProgressUpdater, MusicProgressBar
 
 __all__ = [
     'ProgressTracker',
-    'ProgressInfo', 
+    'ProgressInfo',
     'ProgressCallback',
     'MegaProgressTracker',
     'FFmpegProgressTracker',
     'UploadProgressTracker',
-    'DiscordProgressUpdater'
+    'DiscordProgressUpdater',
+    'MusicProgressTracker',
+    'MusicProgressUpdater',
+    'MusicProgressBar'
 ]
