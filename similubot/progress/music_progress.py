@@ -3,10 +3,12 @@
 import asyncio
 import logging
 import time
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
 import discord
 
 from .base import ProgressTracker, ProgressInfo, ProgressStatus, ProgressCallback
+from similubot.music.lyrics_client import NetEaseCloudMusicClient
+from similubot.music.lyrics_parser import LyricsParser, LyricLine
 
 
 class MusicProgressTracker(ProgressTracker):
@@ -242,6 +244,13 @@ class MusicProgressUpdater:
         # Active progress bar tracking
         self._active_progress_bars: Dict[int, asyncio.Task] = {}
 
+        # Lyrics functionality
+        self.lyrics_client = NetEaseCloudMusicClient()
+        self.lyrics_parser = LyricsParser()
+
+        # Cache for lyrics to avoid repeated API calls
+        self._lyrics_cache: Dict[str, Optional[List[LyricLine]]] = {}
+
     def create_progress_bar(self, current_seconds: float, total_seconds: float) -> str:
         """
         Create a visual progress bar using Unicode characters.
@@ -305,16 +314,72 @@ class MusicProgressUpdater:
         else:
             return "⏹"
 
-    def create_progress_embed(self, guild_id: int, song) -> Optional[discord.Embed]:
+    async def get_song_lyrics(self, song) -> Optional[List[LyricLine]]:
         """
-        Create a Discord embed with the current progress bar.
+        Get lyrics for a song, using cache if available.
+
+        Args:
+            song: Song object with title and uploader information
+
+        Returns:
+            List of LyricLine objects, or None if no lyrics found
+        """
+        try:
+            # Create cache key from song title and artist
+            cache_key = f"{song.title}|{song.uploader}"
+
+            # Check cache first
+            if cache_key in self._lyrics_cache:
+                self.logger.debug(f"Using cached lyrics for: {song.title}")
+                return self._lyrics_cache[cache_key]
+
+            self.logger.debug(f"Fetching lyrics for: {song.title} by {song.uploader}")
+
+            # Search and fetch lyrics
+            lyrics_data = await self.lyrics_client.search_and_get_lyrics(
+                song.title, song.uploader
+            )
+
+            if not lyrics_data:
+                self.logger.debug(f"No lyrics found for: {song.title}")
+                self._lyrics_cache[cache_key] = None
+                return None
+
+            # Parse lyrics
+            lyrics_lines = self.lyrics_parser.parse_lrc_lyrics(
+                lyrics_data.get('lyric', ''),
+                lyrics_data.get('sub_lyric', '')
+            )
+
+            if not lyrics_lines or self.lyrics_parser.is_instrumental_track(lyrics_lines):
+                self.logger.debug(f"Instrumental track or no valid lyrics: {song.title}")
+                self._lyrics_cache[cache_key] = None
+                return None
+
+            # Cache the results
+            self._lyrics_cache[cache_key] = lyrics_lines
+            self.logger.info(f"Successfully cached lyrics for: {song.title} ({len(lyrics_lines)} lines)")
+
+            return lyrics_lines
+
+        except Exception as e:
+            self.logger.error(f"Error fetching lyrics for '{song.title}': {e}", exc_info=True)
+            # Cache the failure to avoid repeated attempts
+            cache_key = f"{song.title}|{song.uploader}"
+            self._lyrics_cache[cache_key] = None
+            return None
+
+    def create_progress_embed(self, guild_id: int, song, lyrics: Optional[List[LyricLine]] = None) -> Optional[discord.Embed]:
+        """
+        Create a Discord embed with the current progress bar and synchronized lyrics.
 
         Args:
             guild_id: Discord guild ID
             song: Current song object
+            lyrics: Optional list of parsed lyrics
 
         Returns:
-            Discord embed with progress bar, or None if not playing
+            Discord embed with progress bar and lyrics, or None if not playing
         """
         try:
             # Get current playback position
@@ -353,6 +418,16 @@ class MusicProgressUpdater:
                 inline=False
             )
 
+            # Add synchronized lyrics if available
+            if lyrics:
+                lyric_text = self._get_current_lyric_display(lyrics, current_position)
+                if lyric_text:
+                    embed.add_field(
+                        name="🎤 Lyrics",
+                        value=lyric_text,
+                        inline=False
+                    )
+
             # Additional info
             embed.add_field(
                 name="Artist",
@@ -379,6 +454,62 @@ class MusicProgressUpdater:
             self.logger.error(f"Error creating progress embed: {e}", exc_info=True)
             return None
 
+    def _get_current_lyric_display(self, lyrics: List[LyricLine], current_position: float) -> str:
+        """
+        Get the current lyric display text based on playback position.
+
+        Args:
+            lyrics: List of parsed lyric lines
+            current_position: Current playback position in seconds
+
+        Returns:
+            Formatted lyric text for display
+        """
+        try:
+            # Get lyric context
+            context = self.lyrics_parser.get_lyric_context(lyrics, current_position, context_lines=1)
+
+            current_line = context.get('current')
+            next_lines = context.get('next', [])
+
+            if not current_line:
+                # Show upcoming lyric if no current line
+                if next_lines:
+                    upcoming_line = next_lines[0]
+                    formatted_text = self.lyrics_parser.format_lyric_display(upcoming_line)
+                    return f"*Coming up:*\n{formatted_text}"
+                else:
+                    return "*No lyrics available at this time*"
+
+            # Format current lyric
+            display_parts = []
+
+            # Current line (highlighted)
+            current_text = self.lyrics_parser.format_lyric_display(current_line)
+            if current_text:
+                display_parts.append(f"**{current_text}**")
+
+            # Show next line as preview if available
+            if next_lines and len(next_lines) > 0:
+                next_line = next_lines[0]
+                next_text = self.lyrics_parser.format_lyric_display(next_line, show_translation=False)
+                if next_text:
+                    display_parts.append(f"*{next_text}*")
+
+            # Combine parts
+            if display_parts:
+                result = "\n".join(display_parts)
+                # Limit length to avoid Discord embed limits
+                if len(result) > 200:
+                    result = result[:197] + "..."
+                return result
+            else:
+                return "*♪ Instrumental ♪*"
+
+        except Exception as e:
+            self.logger.error(f"Error formatting lyric display: {e}", exc_info=True)
+            return "*Error displaying lyrics*"
+
     async def start_progress_updates(
         self,
         message: discord.Message,
@@ -387,7 +518,7 @@ class MusicProgressUpdater:
         update_interval: Optional[float] = None
     ) -> None:
         """
-        Start real-time progress bar updates for a message.
+        Start real-time progress bar updates with synchronized lyrics for a message.
 
         Args:
             message: Discord message to update
@@ -398,7 +529,18 @@ class MusicProgressUpdater:
         interval = update_interval or self.update_interval
 
         try:
-            self.logger.info(f"Starting progress updates for guild {guild_id}")
+            self.logger.info(f"Starting progress updates with lyrics for guild {guild_id}")
+
+            # Fetch lyrics for the song (async, non-blocking)
+            lyrics = None
+            try:
+                lyrics = await self.get_song_lyrics(song)
+                if lyrics:
+                    self.logger.info(f"Loaded {len(lyrics)} lyric lines for: {song.title}")
+                else:
+                    self.logger.debug(f"No lyrics available for: {song.title}")
+            except Exception as e:
+                self.logger.warning(f"Failed to load lyrics for '{song.title}': {e}")
 
             update_count = 0
             max_updates = 120  # Maximum 10 minutes of updates (120 * 5 seconds)
@@ -415,8 +557,8 @@ class MusicProgressUpdater:
                     self.logger.debug(f"Voice client disconnected, ending progress updates for guild {guild_id}")
                     break
 
-                # Create updated embed
-                embed = self.create_progress_embed(guild_id, song)
+                # Create updated embed with lyrics
+                embed = self.create_progress_embed(guild_id, song, lyrics)
                 if not embed:
                     self.logger.debug(f"Could not create progress embed, ending updates for guild {guild_id}")
                     break
@@ -474,8 +616,15 @@ class MusicProgressUpdater:
                 self._active_progress_bars[guild_id].cancel()
                 del self._active_progress_bars[guild_id]
 
-            # Create initial embed
-            embed = self.create_progress_embed(guild_id, current_song)
+            # Fetch lyrics for initial display
+            lyrics = None
+            try:
+                lyrics = await self.get_song_lyrics(current_song)
+            except Exception as e:
+                self.logger.warning(f"Failed to load lyrics for initial display: {e}")
+
+            # Create initial embed with lyrics
+            embed = self.create_progress_embed(guild_id, current_song, lyrics)
             if not embed:
                 return False
 
