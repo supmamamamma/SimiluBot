@@ -15,7 +15,7 @@ from similubot.utils.config_manager import ConfigManager
 class MusicCommands:
     """
     Music command handlers for SimiluBot.
-    
+
     Provides commands for music playback, queue management,
     and voice channel interaction.
     """
@@ -23,7 +23,7 @@ class MusicCommands:
     def __init__(self, config: ConfigManager, music_player: MusicPlayer):
         """
         Initialize music commands.
-        
+
         Args:
             config: Configuration manager
             music_player: Music player instance
@@ -31,16 +31,16 @@ class MusicCommands:
         self.logger = logging.getLogger("similubot.commands.music")
         self.config = config
         self.music_player = music_player
-        
+
         # Check if music functionality is enabled
         self._enabled = config.get('music.enabled', True)
-        
+
         self.logger.debug("Music commands initialized")
 
     def is_available(self) -> bool:
         """
         Check if music commands are available.
-        
+
         Returns:
             True if available, False otherwise
         """
@@ -49,7 +49,7 @@ class MusicCommands:
     def register_commands(self, registry: CommandRegistry) -> None:
         """
         Register music commands with the command registry.
-        
+
         Args:
             registry: Command registry instance
         """
@@ -85,7 +85,7 @@ class MusicCommands:
     async def music_command(self, ctx: commands.Context, *args) -> None:
         """
         Main music command handler.
-        
+
         Args:
             ctx: Discord command context
             *args: Command arguments
@@ -95,7 +95,7 @@ class MusicCommands:
             return
 
         subcommand = args[0]
-        
+
         if subcommand in ["queue", "q"]:
             await self._handle_queue_command(ctx)
         elif subcommand in ["now", "current", "playing"]:
@@ -115,7 +115,7 @@ class MusicCommands:
     async def _handle_play_command(self, ctx: commands.Context, url: str) -> None:
         """
         Handle play command (add song to queue).
-        
+
         Args:
             ctx: Discord command context
             url: YouTube URL
@@ -136,15 +136,16 @@ class MusicCommands:
 
         # Create progress updater
         progress_updater = DiscordProgressUpdater(response)
+        progress_callback = progress_updater.create_callback()
 
         try:
             # Add song to queue
             success, position, error = await self.music_player.add_song_to_queue(
-                url, ctx.author, progress_updater.update_progress
+                url, ctx.author, progress_callback
             )
 
             if not success:
-                await self._send_error_embed(response, "Failed to Add Song", error)
+                await self._send_error_embed(response, "Failed to Add Song", error or "Unknown error")
                 return
 
             # Get audio info for the added song
@@ -158,31 +159,31 @@ class MusicCommands:
                 title="🎵 Song Added to Queue",
                 color=discord.Color.green()
             )
-            
+
             embed.add_field(
                 name="Title",
                 value=audio_info.title,
                 inline=False
             )
-            
+
             embed.add_field(
                 name="Duration",
                 value=self.music_player.youtube_client.format_duration(audio_info.duration),
                 inline=True
             )
-            
+
             embed.add_field(
                 name="Uploader",
                 value=audio_info.uploader,
                 inline=True
             )
-            
+
             embed.add_field(
                 name="Position in Queue",
                 value=f"#{position}",
                 inline=True
             )
-            
+
             embed.add_field(
                 name="Requested by",
                 value=ctx.author.display_name,
@@ -201,13 +202,13 @@ class MusicCommands:
     async def _handle_queue_command(self, ctx: commands.Context) -> None:
         """
         Handle queue display command.
-        
+
         Args:
             ctx: Discord command context
         """
         try:
             queue_info = await self.music_player.get_queue_info(ctx.guild.id)
-            
+
             if queue_info["is_empty"] and not queue_info["current_song"]:
                 embed = discord.Embed(
                     title="🎵 Music Queue",
@@ -237,7 +238,7 @@ class MusicCommands:
             if not queue_info["is_empty"]:
                 queue_manager = self.music_player.get_queue_manager(ctx.guild.id)
                 queue_display = await queue_manager.get_queue_display(max_songs=10)
-                
+
                 if queue_display:
                     queue_text = ""
                     for song in queue_display:
@@ -246,7 +247,7 @@ class MusicCommands:
                             f"    Duration: {song['duration']} | "
                             f"Requested by: {song['requester']}\n\n"
                         )
-                    
+
                     embed.add_field(
                         name="📋 Up Next",
                         value=queue_text[:1024],  # Discord field limit
@@ -283,7 +284,7 @@ class MusicCommands:
     async def _handle_now_command(self, ctx: commands.Context) -> None:
         """
         Handle now playing command.
-        
+
         Args:
             ctx: Discord command context
         """
@@ -350,7 +351,7 @@ class MusicCommands:
     async def _handle_skip_command(self, ctx: commands.Context) -> None:
         """
         Handle skip command.
-        
+
         Args:
             ctx: Discord command context
         """
@@ -376,7 +377,7 @@ class MusicCommands:
     async def _handle_stop_command(self, ctx: commands.Context) -> None:
         """
         Handle stop command.
-        
+
         Args:
             ctx: Discord command context
         """
@@ -402,7 +403,7 @@ class MusicCommands:
     async def _handle_jump_command(self, ctx: commands.Context, args: List[str]) -> None:
         """
         Handle jump command.
-        
+
         Args:
             ctx: Discord command context
             args: Command arguments
@@ -442,7 +443,7 @@ class MusicCommands:
     async def _show_music_help(self, ctx: commands.Context) -> None:
         """
         Show music command help.
-        
+
         Args:
             ctx: Discord command context
         """
@@ -476,14 +477,14 @@ class MusicCommands:
         await ctx.reply(embed=embed)
 
     async def _send_error_embed(
-        self, 
-        message: discord.Message, 
-        title: str, 
+        self,
+        message: discord.Message,
+        title: str,
         description: str
     ) -> None:
         """
         Send an error embed.
-        
+
         Args:
             message: Message to edit
             title: Error title
@@ -494,5 +495,5 @@ class MusicCommands:
             description=description,
             color=discord.Color.red()
         )
-        
+
         await message.edit(content=None, embed=embed)
