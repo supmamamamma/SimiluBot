@@ -12,6 +12,7 @@ from similubot.converters.audio_converter import AudioConverter
 from similubot.uploaders.catbox_uploader import CatboxUploader
 from similubot.uploaders.discord_uploader import DiscordUploader
 from similubot.progress.discord_updater import DiscordProgressUpdater
+from similubot.progress.base import ProgressInfo, ProgressStatus
 from similubot.utils.config_manager import ConfigManager
 
 
@@ -308,11 +309,13 @@ class MegaCommands:
 
                 # Update progress
                 if progress_callback:
-                    await progress_callback(
-                        "optimization",
-                        f"🔧 Optimizing file size (trying {target_bitrate} kbps)...",
-                        0.5
+                    progress_info = ProgressInfo(
+                        operation="optimization",
+                        status=ProgressStatus.IN_PROGRESS,
+                        percentage=50.0,
+                        message=f"🔧 Optimizing file size (trying {target_bitrate} kbps)..."
                     )
+                    progress_callback(progress_info)
 
                 # Convert with lower bitrate
                 success, optimized_file, error = await asyncio.to_thread(
@@ -336,11 +339,13 @@ class MegaCommands:
 
                     # Update progress
                     if progress_callback:
-                        await progress_callback(
-                            "optimization",
-                            f"✅ File optimized to {target_bitrate} kbps ({self._format_file_size(new_size)})",
-                            1.0
+                        progress_info = ProgressInfo(
+                            operation="optimization",
+                            status=ProgressStatus.COMPLETED,
+                            percentage=100.0,
+                            message=f"✅ File optimized to {target_bitrate} kbps ({self._format_file_size(new_size)})"
                         )
+                        progress_callback(progress_info)
 
                     return optimized_file, target_bitrate
                 else:
@@ -356,11 +361,13 @@ class MegaCommands:
 
             # Update progress with failure
             if progress_callback:
-                await progress_callback(
-                    "optimization",
-                    "❌ File too large even at lowest bitrate",
-                    1.0
+                progress_info = ProgressInfo(
+                    operation="optimization",
+                    status=ProgressStatus.FAILED,
+                    percentage=100.0,
+                    message="❌ File too large even at lowest bitrate"
                 )
+                progress_callback(progress_info)
 
             return None, current_bitrate
 

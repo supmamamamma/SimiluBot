@@ -359,7 +359,7 @@ class NetEaseCloudMusicClient:
                 return title_clean
 
         # Construct the search query with artist
-        search_query = f"{title_clean} - {artist_clean}"
+        search_query = f"{title_clean} - {artist_clean}".replace("- Topic", "")
 
         self.logger.debug(f"Constructed search query: '{search_query}' from artist: '{artist_clean}' and title: '{title_clean}'")
         return search_query
