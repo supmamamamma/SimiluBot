@@ -251,6 +251,9 @@ class MusicProgressUpdater:
         # Cache for lyrics to avoid repeated API calls
         self._lyrics_cache: Dict[str, Optional[List[LyricLine]]] = {}
 
+        # Track last update positions to catch missed lyrics during fast sections
+        self._last_update_positions: Dict[int, float] = {}
+
     def create_progress_bar(self, current_seconds: float, total_seconds: float) -> str:
         """
         Create a visual progress bar using Unicode characters.
@@ -420,7 +423,7 @@ class MusicProgressUpdater:
 
             # Add synchronized lyrics if available
             if lyrics:
-                lyric_text = self._get_current_lyric_display(lyrics, current_position)
+                lyric_text = self._get_current_lyric_display(lyrics, current_position, guild_id)
                 if lyric_text:
                     embed.add_field(
                         name="🎤 Lyrics",
@@ -454,47 +457,72 @@ class MusicProgressUpdater:
             self.logger.error(f"Error creating progress embed: {e}", exc_info=True)
             return None
 
-    def _get_current_lyric_display(self, lyrics: List[LyricLine], current_position: float) -> str:
+    def _get_current_lyric_display(self, lyrics: List[LyricLine], current_position: float, guild_id: int) -> str:
         """
         Get the current lyric display text based on playback position.
+
+        Enhanced to catch lyrics that may have been missed during fast-paced sections
+        by checking for lyrics that occurred since the last update.
 
         Args:
             lyrics: List of parsed lyric lines
             current_position: Current playback position in seconds
+            guild_id: Discord guild ID for tracking last update position
 
         Returns:
             Formatted lyric text for display
         """
         try:
-            # Get lyric context
-            context = self.lyrics_parser.get_lyric_context(lyrics, current_position, context_lines=1)
+            # Get last update position for this guild
+            last_position = self._last_update_positions.get(guild_id, 0.0)
 
+            # Update the last position for next time
+            self._last_update_positions[guild_id] = current_position
+
+            # Get lyrics that occurred since last update (for fast-paced sections)
+            missed_lyrics = []
+            if last_position > 0 and current_position > last_position:
+                missed_lyrics = self.lyrics_parser.get_lyrics_since_last_update(
+                    lyrics, last_position, current_position, max_lines=2
+                )
+
+            # Get current lyric context
+            context = self.lyrics_parser.get_lyric_context(lyrics, current_position, context_lines=1)
             current_line = context.get('current')
             next_lines = context.get('next', [])
+
+            # Build display parts
+            display_parts = []
+
+            # Show missed lyrics first (if any) with a subtle indicator
+            if missed_lyrics:
+                for missed_line in missed_lyrics:
+                    missed_text = self.lyrics_parser.format_lyric_display(missed_line, show_translation=False)
+                    if missed_text:
+                        display_parts.append(f"~~{missed_text}~~")  # Strikethrough for recently passed
+
+                self.logger.debug(f"Displaying {len(missed_lyrics)} missed lyrics for guild {guild_id}")
 
             if not current_line:
                 # Show upcoming lyric if no current line
                 if next_lines:
                     upcoming_line = next_lines[0]
                     formatted_text = self.lyrics_parser.format_lyric_display(upcoming_line)
-                    return f"*Coming up:*\n{formatted_text}"
-                else:
+                    display_parts.append(f"*Coming up:*\n{formatted_text}")
+                elif not display_parts:  # Only show this if no missed lyrics either
                     return "*No lyrics available at this time*"
+            else:
+                # Current line (highlighted)
+                current_text = self.lyrics_parser.format_lyric_display(current_line)
+                if current_text:
+                    display_parts.append(f"**{current_text}**")
 
-            # Format current lyric
-            display_parts = []
-
-            # Current line (highlighted)
-            current_text = self.lyrics_parser.format_lyric_display(current_line)
-            if current_text:
-                display_parts.append(f"**{current_text}**")
-
-            # Show next line as preview if available
-            if next_lines and len(next_lines) > 0:
-                next_line = next_lines[0]
-                next_text = self.lyrics_parser.format_lyric_display(next_line, show_translation=False)
-                if next_text:
-                    display_parts.append(f"*{next_text}*")
+                # Show next line as preview if available
+                if next_lines and len(next_lines) > 0:
+                    next_line = next_lines[0]
+                    next_text = self.lyrics_parser.format_lyric_display(next_line, show_translation=False)
+                    if next_text:
+                        display_parts.append(f"*{next_text}*")
 
             # Combine parts
             if display_parts:
@@ -592,6 +620,8 @@ class MusicProgressUpdater:
             # Clean up
             if guild_id in self._active_progress_bars:
                 del self._active_progress_bars[guild_id]
+            if guild_id in self._last_update_positions:
+                del self._last_update_positions[guild_id]
 
     async def show_progress_bar(self, message: discord.Message, guild_id: int) -> bool:
         """
@@ -655,6 +685,11 @@ class MusicProgressUpdater:
             del self._active_progress_bars[guild_id]
             self.logger.debug(f"Stopped progress updates for guild {guild_id}")
 
+        # Clean up last update position tracking
+        if guild_id in self._last_update_positions:
+            del self._last_update_positions[guild_id]
+            self.logger.debug(f"Cleaned up last update position for guild {guild_id}")
+
     async def cleanup_all_progress_bars(self) -> None:
         """Clean up all active progress bars."""
         self.logger.info("Cleaning up all progress bars")
@@ -663,6 +698,7 @@ class MusicProgressUpdater:
             self.stop_progress_updates(guild_id)
 
         self._active_progress_bars.clear()
+        self._last_update_positions.clear()
 
 
 # Compatibility alias for existing code

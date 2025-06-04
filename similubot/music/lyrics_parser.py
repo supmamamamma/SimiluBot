@@ -216,6 +216,47 @@ class LyricsParser:
 
         return None
 
+    def get_lyrics_since_last_update(
+        self,
+        lyrics: List[LyricLine],
+        last_position: float,
+        current_position: float,
+        max_lines: int = 3
+    ) -> List[LyricLine]:
+        """
+        Get lyrics that occurred between last update and current position.
+
+        This method helps ensure no lyrics are skipped during fast-paced sections
+        by returning all lyrics that should have been displayed since the last update.
+
+        Args:
+            lyrics: List of parsed lyric lines
+            last_position: Playback position at last update (seconds)
+            current_position: Current playback position (seconds)
+            max_lines: Maximum number of lines to return
+
+        Returns:
+            List of LyricLine objects that occurred in the time interval
+        """
+        if not lyrics or current_position <= last_position:
+            return []
+
+        # Find lyrics that occurred between last_position and current_position
+        interval_lyrics = []
+
+        for line in lyrics:
+            # Include lyrics that started after last_position and before/at current_position
+            if last_position < line.timestamp <= current_position:
+                interval_lyrics.append(line)
+
+        # Limit to max_lines to avoid overwhelming display
+        if len(interval_lyrics) > max_lines:
+            # Keep the most recent lines
+            interval_lyrics = interval_lyrics[-max_lines:]
+
+        self.logger.debug(f"Found {len(interval_lyrics)} lyrics between {last_position:.1f}s and {current_position:.1f}s")
+        return interval_lyrics
+
     def get_lyric_context(
         self,
         lyrics: List[LyricLine],
