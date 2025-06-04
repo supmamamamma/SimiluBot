@@ -179,9 +179,9 @@ class NetEaseCloudMusicClient:
                         return None
 
                     # Check if the response is valid
-                    if not data.get('served', False):
-                        self.logger.debug(f"Lyrics not available for song ID: {song_id}")
-                        return None
+                    # if not data.get('served', False):
+                    #     self.logger.debug(f"Lyrics not available for song ID: {song_id}")
+                    #     return None
 
                     # Extract lyrics data
                     lyrics_data = {
