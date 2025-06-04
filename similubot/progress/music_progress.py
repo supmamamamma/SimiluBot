@@ -462,7 +462,7 @@ class MusicProgressUpdater:
         Get the current lyric display text based on playback position.
 
         Enhanced to catch lyrics that may have been missed during fast-paced sections
-        by checking for lyrics that occurred since the last update.
+        by showing all lyrics that occurred within the update interval as current lyrics.
 
         Args:
             lyrics: List of parsed lyric lines
@@ -480,10 +480,10 @@ class MusicProgressUpdater:
             self._last_update_positions[guild_id] = current_position
 
             # Get lyrics that occurred since last update (for fast-paced sections)
-            missed_lyrics = []
+            interval_lyrics = []
             if last_position > 0 and current_position > last_position:
-                missed_lyrics = self.lyrics_parser.get_lyrics_since_last_update(
-                    lyrics, last_position, current_position, max_lines=2
+                interval_lyrics = self.lyrics_parser.get_lyrics_since_last_update(
+                    lyrics, last_position, current_position, max_lines=4
                 )
 
             # Get current lyric context
@@ -494,32 +494,39 @@ class MusicProgressUpdater:
             # Build display parts
             display_parts = []
 
-            # Show missed lyrics first (if any) with a subtle indicator
-            if missed_lyrics:
-                for missed_line in missed_lyrics:
-                    missed_text = self.lyrics_parser.format_lyric_display(missed_line, show_translation=False)
-                    if missed_text:
-                        display_parts.append(f"~~{missed_text}~~")  # Strikethrough for recently passed
+            # Collect all current lyrics (interval + current)
+            current_lyrics = []
 
-                self.logger.debug(f"Displaying {len(missed_lyrics)} missed lyrics for guild {guild_id}")
+            # Add lyrics from the interval (missed during fast sections)
+            if interval_lyrics:
+                current_lyrics.extend(interval_lyrics)
+                self.logger.debug(f"Including {len(interval_lyrics)} interval lyrics for guild {guild_id}")
 
-            if not current_line:
-                # Show upcoming lyric if no current line
-                if next_lines:
-                    upcoming_line = next_lines[0]
-                    formatted_text = self.lyrics_parser.format_lyric_display(upcoming_line)
-                    display_parts.append(f"*Coming up:*\n{formatted_text}")
-                elif not display_parts:  # Only show this if no missed lyrics either
-                    return "*No lyrics available at this time*"
+            # Add the current line if it's not already in interval_lyrics
+            if current_line:
+                # Check if current line is already in interval_lyrics to avoid duplicates
+                if not any(lyric.timestamp == current_line.timestamp for lyric in interval_lyrics):
+                    current_lyrics.append(current_line)
+
+            # Display all current lyrics as bold
+            if current_lyrics:
+                for lyric in current_lyrics:
+                    lyric_text = self.lyrics_parser.format_lyric_display(lyric, show_translation=True)
+                    if lyric_text:
+                        display_parts.append(f"**{lyric_text}**")
+            elif next_lines:
+                # Show upcoming lyric if no current lyrics
+                upcoming_line = next_lines[0]
+                formatted_text = self.lyrics_parser.format_lyric_display(upcoming_line)
+                display_parts.append(f"*Coming up:*\n{formatted_text}")
             else:
-                # Current line (highlighted)
-                current_text = self.lyrics_parser.format_lyric_display(current_line)
-                if current_text:
-                    display_parts.append(f"**{current_text}**")
+                return "*No lyrics available at this time*"
 
-                # Show next line as preview if available
-                if next_lines and len(next_lines) > 0:
-                    next_line = next_lines[0]
+            # Show next line as preview if available and we have current lyrics
+            if current_lyrics and next_lines:
+                next_line = next_lines[0]
+                # Make sure the next line isn't already displayed as current
+                if not any(lyric.timestamp == next_line.timestamp for lyric in current_lyrics):
                     next_text = self.lyrics_parser.format_lyric_display(next_line, show_translation=False)
                     if next_text:
                         display_parts.append(f"*{next_text}*")
