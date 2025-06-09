@@ -1,0 +1,29 @@
+version: '3.8'
+
+services:
+  similubot:
+    image: ghcr.io/supmamamamma/similubot:latest
+    container_name: similubot
+    restart: unless-stopped
+    volumes:
+      # Configuration files
+      - ./config:/app/config:ro
+      # Logs
+      - ./logs:/app/logs
+    # All configuration is handled through config files in ./config directory
+    networks:
+      - similubot-network
+    # Optional: expose ports if needed for debugging
+    # ports:
+    #   - "8000:8000"
+
+networks:
+  similubot-network:
+    driver: bridge
+
+# Optional: volumes for persistent data
+volumes:
+  logs:
+    driver: local
+  temp:
+    driver: local
