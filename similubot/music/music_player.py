@@ -9,6 +9,8 @@ import discord
 from discord.ext import commands
 
 from .youtube_client import YouTubeClient, AudioInfo
+from .catbox_client import CatboxClient, CatboxAudioInfo
+from .audio_source import UnifiedAudioInfo, AudioSourceType
 from .queue_manager import QueueManager, Song
 from .voice_manager import VoiceManager
 from similubot.progress.base import ProgressCallback
@@ -34,6 +36,7 @@ class MusicPlayer:
 
         # Initialize components
         self.youtube_client = YouTubeClient(temp_dir)
+        self.catbox_client = CatboxClient(temp_dir)
         self.voice_manager = VoiceManager(bot)
 
         # Guild-specific queue managers
@@ -66,6 +69,35 @@ class MusicPlayer:
 
         return self._queue_managers[guild_id]
 
+    def detect_audio_source_type(self, url: str) -> Optional[AudioSourceType]:
+        """
+        Detect the audio source type from a URL.
+
+        Args:
+            url: Audio URL to analyze
+
+        Returns:
+            AudioSourceType if detected, None if unsupported
+        """
+        if self.youtube_client.is_youtube_url(url):
+            return AudioSourceType.YOUTUBE
+        elif self.catbox_client.is_catbox_url(url):
+            return AudioSourceType.CATBOX
+        else:
+            return None
+
+    def is_supported_url(self, url: str) -> bool:
+        """
+        Check if a URL is supported by any audio client.
+
+        Args:
+            url: URL to check
+
+        Returns:
+            True if supported, False otherwise
+        """
+        return self.detect_audio_source_type(url) is not None
+
     async def add_song_to_queue(
         self,
         url: str,
@@ -76,7 +108,7 @@ class MusicPlayer:
         Add a song to the queue and start playback if not already playing.
 
         Args:
-            url: YouTube URL
+            url: Audio URL (YouTube or Catbox)
             requester: User who requested the song
             progress_callback: Optional progress callback
 
@@ -86,16 +118,34 @@ class MusicPlayer:
         guild_id = requester.guild.id
 
         try:
-            # Extract audio info first
-            audio_info = await self.youtube_client.extract_audio_info(url)
-            if not audio_info:
+            # Detect audio source type
+            source_type = self.detect_audio_source_type(url)
+            if not source_type:
+                return False, None, "Unsupported URL format. Please provide a YouTube or Catbox audio file URL."
+
+            # Extract audio info based on source type
+            unified_audio_info = None
+
+            if source_type == AudioSourceType.YOUTUBE:
+                self.logger.debug(f"Processing YouTube URL: {url}")
+                youtube_info = await self.youtube_client.extract_audio_info(url)
+                if youtube_info:
+                    unified_audio_info = UnifiedAudioInfo.from_youtube_info(youtube_info)
+
+            elif source_type == AudioSourceType.CATBOX:
+                self.logger.debug(f"Processing Catbox URL: {url}")
+                catbox_info = await self.catbox_client.extract_audio_info(url)
+                if catbox_info:
+                    unified_audio_info = UnifiedAudioInfo.from_catbox_info(catbox_info)
+
+            if not unified_audio_info:
                 return False, None, "Failed to extract audio information from URL"
 
             # Add to queue
             queue_manager = self.get_queue_manager(guild_id)
-            position = await queue_manager.add_song(audio_info, requester)
+            position = await queue_manager.add_song(unified_audio_info, requester)
 
-            self.logger.info(f"Added song to queue: {audio_info.title} (position {position})")
+            self.logger.info(f"Added {source_type.value} song to queue: {unified_audio_info.title} (position {position})")
 
             # Start playback if not already playing
             if not self.voice_manager.is_playing(guild_id):
@@ -377,21 +427,51 @@ class MusicPlayer:
                     self.logger.debug(f"No more songs in queue for guild {guild_id}")
                     break
 
-                # Download audio
-                success, audio_info, error = await self.youtube_client.download_audio(
-                    song.url, progress_callback
-                )
+                # Handle audio based on source type
+                audio_file_path = None
 
-                if not success or not audio_info:
-                    self.logger.error(f"Failed to download audio for {song.title}: {error}")
+                if hasattr(song.audio_info, 'source_type'):
+                    # New UnifiedAudioInfo format
+                    if song.audio_info.is_youtube():
+                        # Download YouTube audio
+                        success, youtube_audio_info, error = await self.youtube_client.download_audio(
+                            song.url, progress_callback
+                        )
+                        if not success or not youtube_audio_info:
+                            self.logger.error(f"Failed to download YouTube audio for {song.title}: {error}")
+                            continue
+                        audio_file_path = youtube_audio_info.file_path
+
+                    elif song.audio_info.is_catbox():
+                        # Validate Catbox audio file
+                        success, catbox_audio_info, error = await self.catbox_client.validate_audio_file(
+                            song.url, progress_callback
+                        )
+                        if not success or not catbox_audio_info:
+                            self.logger.error(f"Failed to validate Catbox audio for {song.title}: {error}")
+                            continue
+                        audio_file_path = catbox_audio_info.file_path  # This is the URL for streaming
+
+                else:
+                    # Legacy AudioInfo format (YouTube only)
+                    success, youtube_audio_info, error = await self.youtube_client.download_audio(
+                        song.url, progress_callback
+                    )
+                    if not success or not youtube_audio_info:
+                        self.logger.error(f"Failed to download audio for {song.title}: {error}")
+                        continue
+                    audio_file_path = youtube_audio_info.file_path
+
+                if not audio_file_path:
+                    self.logger.error(f"No audio file path available for {song.title}")
                     continue
 
-                # Store current audio file path
-                self._current_audio_files[guild_id] = audio_info.file_path
+                # Store current audio file path (for cleanup)
+                self._current_audio_files[guild_id] = audio_file_path
 
-                # Create audio source
+                # Create audio source (works for both local files and URLs)
                 audio_source = discord.FFmpegPCMAudio(
-                    audio_info.file_path,
+                    audio_file_path,
                     options='-vn'  # No video
                 )
 
@@ -445,7 +525,11 @@ class MusicPlayer:
         """
         if guild_id in self._current_audio_files:
             file_path = self._current_audio_files[guild_id]
-            self.youtube_client.cleanup_file(file_path)
+
+            # Only clean up local files, not URLs
+            if file_path and not file_path.startswith('http'):
+                self.youtube_client.cleanup_file(file_path)
+
             del self._current_audio_files[guild_id]
 
     async def cleanup_all(self) -> None:
@@ -466,6 +550,9 @@ class MusicPlayer:
 
         # Clean up voice connections
         await self.voice_manager.cleanup_all_connections()
+
+        # Clean up HTTP sessions
+        await self.catbox_client.cleanup()
 
         # Clear state
         self._playback_tasks.clear()

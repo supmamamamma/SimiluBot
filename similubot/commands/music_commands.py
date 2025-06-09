@@ -62,7 +62,8 @@ class MusicCommands:
             return
 
         usage_examples = [
-            "!music <youtube_url> - Add song to queue and start playback",
+            "!music <youtube_url> - Add YouTube song to queue and start playback",
+            "!music <catbox_audio_url> - Add Catbox audio file to queue and start playback",
             "!music queue - Display current queue",
             "!music now - Show current song progress",
             "!music skip - Skip to next song",
@@ -71,7 +72,7 @@ class MusicCommands:
         ]
 
         help_text = (
-            "Music playback commands for YouTube audio. "
+            "Music playback commands for YouTube videos and Catbox audio files. "
             "You must be in a voice channel to use these commands."
         )
 
@@ -110,8 +111,8 @@ class MusicCommands:
             await self._handle_stop_command(ctx)
         elif subcommand in ["jump", "goto"]:
             await self._handle_jump_command(ctx, args[1:])
-        elif self.music_player.youtube_client.is_youtube_url(subcommand):
-            # First argument is a YouTube URL
+        elif self.music_player.is_supported_url(subcommand):
+            # First argument is a supported audio URL (YouTube or Catbox)
             await self._handle_play_command(ctx, subcommand)
         else:
             await self._show_music_help(ctx)
@@ -122,7 +123,7 @@ class MusicCommands:
 
         Args:
             ctx: Discord command context
-            url: YouTube URL
+            url: Audio URL (YouTube or Catbox)
         """
         # Check if user is in voice channel
         if not ctx.author.voice or not ctx.author.voice.channel:
@@ -135,8 +136,12 @@ class MusicCommands:
             await ctx.reply(f"❌ {error}")
             return
 
+        # Detect source type for initial message
+        source_type = self.music_player.detect_audio_source_type(url)
+        source_name = source_type.value.title() if source_type else "Audio"
+
         # Send initial response
-        response = await ctx.reply("🔄 Processing YouTube URL...")
+        response = await ctx.reply(f"🔄 Processing {source_name} URL...")
 
         # Create progress updater
         progress_updater = DiscordProgressUpdater(response)
@@ -152,8 +157,13 @@ class MusicCommands:
                 await self._send_error_embed(response, "Failed to Add Song", error or "Unknown error")
                 return
 
-            # Get audio info for the added song
-            audio_info = await self.music_player.youtube_client.extract_audio_info(url)
+            # Get audio info for the added song based on source type
+            audio_info = None
+            if source_type and source_type.value == "youtube":
+                audio_info = await self.music_player.youtube_client.extract_audio_info(url)
+            elif source_type and source_type.value == "catbox":
+                audio_info = await self.music_player.catbox_client.extract_audio_info(url)
+
             if not audio_info:
                 await self._send_error_embed(response, "Error", "Failed to get song information")
                 return
@@ -170,17 +180,32 @@ class MusicCommands:
                 inline=False
             )
 
+            # Format duration based on source type
+            if hasattr(audio_info, 'duration') and audio_info.duration > 0:
+                duration_str = self.music_player.youtube_client.format_duration(audio_info.duration)
+            else:
+                duration_str = "Unknown"
+
             embed.add_field(
                 name="Duration",
-                value=self.music_player.youtube_client.format_duration(audio_info.duration),
+                value=duration_str,
                 inline=True
             )
 
             embed.add_field(
-                name="Uploader",
+                name="Source",
                 value=audio_info.uploader,
                 inline=True
             )
+
+            # Add file size for Catbox files
+            if hasattr(audio_info, 'file_size') and audio_info.file_size:
+                file_size_str = self.music_player.catbox_client.format_file_size(audio_info.file_size)
+                embed.add_field(
+                    name="File Size",
+                    value=file_size_str,
+                    inline=True
+                )
 
             embed.add_field(
                 name="Position in Queue",
@@ -194,7 +219,15 @@ class MusicCommands:
                 inline=True
             )
 
-            if audio_info.thumbnail_url:
+            # Add format info for Catbox files
+            if hasattr(audio_info, 'file_format') and audio_info.file_format:
+                embed.add_field(
+                    name="Format",
+                    value=audio_info.file_format.upper(),
+                    inline=True
+                )
+
+            if hasattr(audio_info, 'thumbnail_url') and audio_info.thumbnail_url:
                 embed.set_thumbnail(url=audio_info.thumbnail_url)
 
             await response.edit(content=None, embed=embed)
@@ -495,7 +528,8 @@ class MusicCommands:
         )
 
         commands_text = (
-            "`!music <youtube_url>` - Add song to queue\n"
+            "`!music <youtube_url>` - Add YouTube song to queue\n"
+            "`!music <catbox_audio_url>` - Add Catbox audio file to queue\n"
             "`!music queue` - Show current queue\n"
             "`!music now` - Show current song\n"
             "`!music skip` - Skip current song\n"
@@ -511,7 +545,7 @@ class MusicCommands:
 
         embed.add_field(
             name="Requirements",
-            value="• You must be in a voice channel\n• Provide valid YouTube URLs",
+            value="• You must be in a voice channel\n• Provide valid YouTube or Catbox audio URLs\n• Supported formats: MP3, WAV, OGG, M4A, FLAC, AAC, OPUS, WMA",
             inline=False
         )
 

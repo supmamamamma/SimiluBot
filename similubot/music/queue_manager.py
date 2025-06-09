@@ -7,30 +7,32 @@ from dataclasses import dataclass, field
 from datetime import datetime
 import discord
 from .youtube_client import AudioInfo
+from .audio_source import UnifiedAudioInfo
+from typing import Union
 
 
 @dataclass
 class Song:
     """Represents a song in the music queue."""
-    audio_info: AudioInfo
+    audio_info: Union[AudioInfo, UnifiedAudioInfo]
     requester: discord.Member
     added_at: datetime = field(default_factory=datetime.now)
-    
+
     @property
     def title(self) -> str:
         """Get song title."""
         return self.audio_info.title
-    
+
     @property
     def duration(self) -> int:
         """Get song duration in seconds."""
         return self.audio_info.duration
-    
+
     @property
     def url(self) -> str:
         """Get song URL."""
         return self.audio_info.url
-    
+
     @property
     def uploader(self) -> str:
         """Get song uploader."""
@@ -60,7 +62,7 @@ class QueueManager:
         
         self.logger.debug(f"Queue manager initialized for guild {guild_id}")
 
-    async def add_song(self, audio_info: AudioInfo, requester: discord.Member) -> int:
+    async def add_song(self, audio_info: Union[AudioInfo, UnifiedAudioInfo], requester: discord.Member) -> int:
         """
         Add a song to the queue.
         
