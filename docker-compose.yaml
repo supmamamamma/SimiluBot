@@ -7,7 +7,7 @@ services:
     restart: unless-stopped
     volumes:
       # Configuration files
-      - ./config:/app/config:ro
+      - ./config:/app/config:rw
       # Logs
       - ./logs:/app/logs
     # All configuration is handled through config files in ./config directory
@@ -21,9 +21,3 @@ networks:
   similubot-network:
     driver: bridge
 
-# Optional: volumes for persistent data
-volumes:
-  logs:
-    driver: local
-  temp:
-    driver: local
