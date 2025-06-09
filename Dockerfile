@@ -8,22 +8,29 @@ WORKDIR /app
 RUN apt-get update && apt-get install -y \
     ffmpeg \
     git \
+    wget \
+    sudo \
     && rm -rf /var/lib/apt/lists/*
 
-# 第四步：复制项目文件
+# 第四步：安装MEGAcmd
+RUN wget https://mega.nz/linux/repo/Debian_12/amd64/megacmd-Debian_12_amd64.deb && \
+    apt install -y ./megacmd-Debian_12_amd64.deb && \
+    rm megacmd-Debian_12_amd64.deb
+
+# 第五步：复制项目文件
 COPY . /app/
 
-# 第五步：安装Python依赖
+# 第六步：安装Python依赖
 RUN pip install --no-cache-dir -r requirements.txt
 
-# 第六步：创建配置目录和文件
+# 第七步：创建配置目录和文件
 RUN mkdir -p /app/config && \
     if [ ! -f /app/config/config.yaml ]; then \
     cp /app/config/config.yaml.example /app/config/config.yaml; \
     fi
 
-# 第七步：设置环境变量
+# 第八步：设置环境变量
 ENV PYTHONUNBUFFERED=1
 
-# 第八步：设置启动命令
+# 第九步：设置启动命令
 CMD ["python", "main.py"]
