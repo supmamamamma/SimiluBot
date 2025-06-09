@@ -10,6 +10,10 @@ RUN apt-get update && apt-get install -y \
     git \
     wget \
     sudo \
+    libfuse2 \
+    gpg \
+    procps \
+    fuse \
     && rm -rf /var/lib/apt/lists/*
 
 # 第四步：安装MEGAcmd
